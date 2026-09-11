@@ -1,0 +1,17 @@
+[Unit]
+Description=epagerPi 排程器（合成畫面並推到電子紙）
+After=network.target epagerpi-server.service
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/epagerPi
+Environment=PYTHONPATH=/home/pi/epagerPi
+# 換成 data/devices.json 裡實際要驅動的裝置 id；如果一顆 Pi 要同時驅動多塊面板，
+# 複製這個檔案成 epagerpi-scheduler@second.service 之類，改 --device 即可分開跑。
+ExecStart=/usr/bin/python3 -m server.scheduler --device phat-01
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

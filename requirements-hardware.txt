@@ -1,0 +1,8 @@
+# 只有「真的要驅動實體電子紙/UPS」的機器才需要（例如 Pi Zero 2 W）。
+# 開發機/線上 Docker（純渲染，不接硬體）不要裝這份，裝了在非 Pi 機器上也會裝不起來或沒作用。
+#
+# 安裝：pip install -r requirements-hardware.txt --break-system-packages
+inky>=2.4.0
+gpiozero
+spidev
+smbus2

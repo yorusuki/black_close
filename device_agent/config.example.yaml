@@ -1,0 +1,33 @@
+# 複製這份成 device_agent/config.yaml 後依實際情況修改。
+
+# 對應 server/data/devices.json 裡的裝置 id
+device_id: phat-01
+
+# "local"：跟 server 同一台機器/同一個 Python 環境（Pi all-in-one 模式，
+#          這個檔案給 UPS daemon 讀 device_id 用，畫面刷新由 server/scheduler.py 直接處理）。
+# 網址（如 "https://your-server.example.com"）：split 模式，agent.py 會定期打這個網址的
+#          /api/devices/<device_id>/layout-data 拿已解析好的資料，自己在本機用更短的
+#          tick_seconds 頻率合成畫面、判斷刷新、推到螢幕。
+render_endpoint: local
+
+# render_endpoint 為網址時，多久跟伺服器要一次新的 layout-data（秒）——這一輪只影響
+# 「要打網路的」資料（http 型別）多久更新一次。
+poll_interval_seconds: 30
+
+# 本機重新合成 + 判斷刷新的頻率（秒），跟 poll_interval_seconds 分開：倒數計時/
+# 吉祥物動畫這類「本地就能算」的內容靠這個更短的頻率保持即時感，不受
+# poll_interval_seconds 限制（見 docs/ARCHITECTURE.md 拆分模式說明）。
+tick_seconds: 1
+
+# render_endpoint 為網址、且線上版有開驗證（AUTH_ENABLED=1）時填入，會帶在
+# Authorization: Bearer <api_token>
+api_token: ""
+
+# ---- UPS 電量看門狗 ----
+ups:
+  enabled: true
+  i2c_address: 0x43
+  poll_interval_seconds: 30
+  shutdown_threshold_percent: 35
+  # 連續幾次低於門檻才真的觸發關機，避免單次雜訊誤判
+  shutdown_confirm_reads: 3

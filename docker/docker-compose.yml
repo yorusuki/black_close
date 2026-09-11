@@ -1,0 +1,25 @@
+services:
+  epagerpi:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: epagerpi-server:latest
+    restart: unless-stopped
+    environment:
+      EPAGERPI_AUTH_ENABLED: "1"
+      EPAGERPI_AUTH_USER: ${EPAGERPI_AUTH_USER:-admin}
+      EPAGERPI_AUTH_PASS: ${EPAGERPI_AUTH_PASS:?請先在 docker/.env 設定}
+      EPAGERPI_API_TOKEN: ${EPAGERPI_API_TOKEN:?請先在 docker/.env 設定，裝置代理輪詢時要帶這組 token}
+      EPAGERPI_FONT_PATH: ${EPAGERPI_FONT_PATH:-}
+    volumes:
+      - ../data:/app/data
+    # 不發布 host port：cloudflared 容器透過同一個 Docker network
+    # 以 http://epagerpi:8080 存取此服務。
+    expose:
+      - "8080"
+    networks: [cloudflared]
+
+networks:
+  cloudflared:
+    external: true
+    name: cloudflared

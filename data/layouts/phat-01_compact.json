@@ -1,0 +1,38 @@
+{
+  "elements": [
+    {
+      "instance_id": "clock_bar-top",
+      "module_id": "clock_bar",
+      "x": 0, "y": 0, "w": 212, "h": 20, "z": 10,
+      "refresh_interval": 20,
+      "config": {"time_format": "%H:%M"}
+    },
+    {
+      "instance_id": "progress-survival",
+      "module_id": "progress_bar",
+      "x": 0, "y": 22, "w": 212, "h": 50, "z": 1,
+      "refresh_interval": 60,
+      "config": {
+        "title": "今日生存進度",
+        "value_source": {"type": "time_progress", "start": "09:00", "end": "18:30"},
+        "min": 0, "max": 100, "unit": "%",
+        "footer_lines": [
+          {"big": true, "value_source": {"type": "time_until", "target": "18:30"}}
+        ]
+      }
+    },
+    {
+      "instance_id": "mascot-bottom",
+      "module_id": "mascot",
+      "x": 0, "y": 74, "w": 212, "h": 30, "z": 20,
+      "refresh_interval": 8,
+      "config": {
+        "interval_seconds": 8,
+        "frames": [
+          {"face": "( ´・ω・`)", "line": "撐住。"},
+          {"face": "（￣ω￣;）", "line": "快了。"}
+        ]
+      }
+    }
+  ]
+}

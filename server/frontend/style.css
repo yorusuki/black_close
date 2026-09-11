@@ -1,0 +1,155 @@
+:root {
+  color-scheme: light dark;
+  --bg: #f4f3ee;
+  --panel: #ffffff;
+  --border: #d8d5cb;
+  --text: #1c1b18;
+  --muted: #77746a;
+  --accent: #b3352c;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #18181a;
+    --panel: #232325;
+    --border: #3a3a3d;
+    --text: #ecebe6;
+    --muted: #9a9890;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, "Segoe UI", "Noto Sans TC", sans-serif;
+}
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.topbar h1 { font-size: 16px; margin: 0; white-space: nowrap; }
+.topbar-controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 13px; }
+.topbar-controls label { display: flex; gap: 4px; align-items: center; }
+input, select, textarea, button {
+  font: inherit;
+  color: inherit;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+}
+button { cursor: pointer; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.danger { background: transparent; border-color: var(--accent); color: var(--accent); }
+
+.layout {
+  display: grid;
+  grid-template-columns: 220px 1fr 320px;
+  gap: 12px;
+  padding: 12px;
+  align-items: start;
+}
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  max-height: calc(100vh - 90px);
+  overflow: auto;
+}
+.panel h2 { font-size: 13px; margin: 0 0 6px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.hint { font-size: 12px; color: var(--muted); line-height: 1.5; }
+
+#module-list .module-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  margin-bottom: 8px;
+  cursor: grab;
+}
+#module-list .module-item b { display: block; font-size: 13px; }
+#module-list .module-item span { font-size: 11px; color: var(--muted); }
+
+/* 畫布區塊本身的可視高度鎖在視窗內（topbar 高度另外扣），寬度由 grid 的 1fr 欄位決定，
+   兩者都不會超出螢幕；#canvas 永遠是裝置「實際像素尺寸」，縮放用 CSS transform 疊上去，
+   不會動到存進 layout 的座標數字。 */
+.canvas-wrap {
+  overflow: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
+  min-width: 0;
+  min-height: 0;
+  max-height: calc(100vh - 100px);
+}
+#canvas-scale { display: inline-block; position: relative; }
+#canvas {
+  position: relative;
+  background: #ffffff;
+  outline: 2px solid var(--border);
+  transform-origin: top left;
+}
+.el {
+  position: absolute;
+  border: 1px solid rgba(0,0,0,.35);
+  background: rgba(255,255,255,.9);
+  overflow: hidden;
+  cursor: move;
+  font-size: 11px;
+}
+.el .el-label {
+  position: absolute; top: 0; left: 0; right: 0;
+  background: rgba(179,53,44,.85); color: #fff; padding: 1px 4px;
+  font-size: 10px; pointer-events: none;
+}
+.el.selected { outline: 2px solid var(--accent); }
+.el .resize-handle {
+  position: absolute; right: 0; bottom: 0; width: 12px; height: 12px;
+  background: var(--accent); cursor: nwse-resize;
+  transform-origin: bottom right;
+}
+
+#props-form label { display: block; font-size: 12px; margin-bottom: 8px; }
+#props-form input, #props-form textarea { width: 100%; margin-top: 2px; }
+#props-form .row { display: flex; gap: 8px; }
+#props-form .row label { flex: 1; }
+#props-form textarea { font-family: ui-monospace, monospace; font-size: 11px; }
+
+.asset-upload-row { display: flex; gap: 6px; margin-bottom: 8px; }
+.asset-upload-row input[type="file"] { flex: 1; min-width: 0; }
+
+.asset-list {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-bottom: 16px;
+  max-height: 260px;
+  overflow: auto;
+}
+.asset-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px;
+  font-size: 11px;
+}
+.asset-item img {
+  width: 100%;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 4px;
+  background: repeating-conic-gradient(#e6e4da 0% 25%, transparent 0% 50%) 50% / 12px 12px;
+  display: block;
+}
+.asset-item-meta { display: flex; flex-direction: column; gap: 1px; margin: 4px 0; overflow: hidden; }
+.asset-item-meta span:first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.asset-item-actions { display: flex; gap: 4px; }
+.asset-item-actions button { flex: 1; padding: 2px 4px; font-size: 11px; }
+
+#preview-img { width: 100%; border: 1px solid var(--border); border-radius: 6px; margin-top: 6px; background: #fff; }
+#scenes-json { width: 100%; font-family: ui-monospace, monospace; font-size: 11px; margin-bottom: 8px; }
