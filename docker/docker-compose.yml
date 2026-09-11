@@ -11,12 +11,33 @@ services:
       EPAGERPI_AUTH_PASS: ${EPAGERPI_AUTH_PASS:?請先在 docker/.env 設定}
       EPAGERPI_API_TOKEN: ${EPAGERPI_API_TOKEN:?請先在 docker/.env 設定，裝置代理輪詢時要帶這組 token}
       EPAGERPI_FONT_PATH: ${EPAGERPI_FONT_PATH:-}
+      EPAGERPI_TIMEZONE: ${EPAGERPI_TIMEZONE:-Asia/Taipei}
     volumes:
       - ../data:/app/data
     # 不發布 host port：cloudflared 容器透過同一個 Docker network
     # 以 http://epagerpi:8080 存取此服務。
     expose:
       - "8080"
+    networks: [cloudflared]
+
+  attendance-sync:
+    image: epagerpi-server:latest
+    restart: unless-stopped
+    init: true
+    shm_size: "1gb"
+    command: ["python", "-m", "server.attendance_sync"]
+    environment:
+      EPAGERPI_DATA_DIR: /app/data
+      EPAGERPI_TIMEZONE: ${EPAGERPI_TIMEZONE:-Asia/Taipei}
+      EIP_LOGIN_URL: ${EIP_LOGIN_URL:?請先在 docker/.env 設定 EIP 登入網址}
+      USER_NAME: ${USER_NAME:?請先在 docker/.env 設定姓名}
+      LOGIN_USERNAME: ${LOGIN_USERNAME:?請先在 docker/.env 設定登入帳號}
+      LOGIN_PASSWORD: ${LOGIN_PASSWORD:?請先在 docker/.env 設定登入密碼}
+    volumes:
+      - ../data:/app/data
+    depends_on:
+      epagerpi:
+        condition: service_started
     networks: [cloudflared]
 
 networks:

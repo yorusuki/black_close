@@ -9,13 +9,19 @@ RUN apt-get update \
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt gunicorn
+COPY requirements.txt requirements-server.txt .
+# Playwright 的 Chromium 與 Linux 系統函式庫必須一起裝進 image；Pi 不使用這份
+# requirements-server.txt，因此不會被迫安裝無頭瀏覽器相依。
+RUN python -m pip install --no-cache-dir --upgrade "pip>=26.2" "setuptools>=83.0.0" \
+    && pip install --no-cache-dir -r requirements-server.txt gunicorn \
+    && python -m playwright install --with-deps chromium
 
 COPY server/ ./server/
+COPY feat/slip/ ./feat/slip/
 
 ENV PYTHONPATH=/app
 ENV EPAGERPI_DATA_DIR=/app/data
+ENV PLAYWRIGHT_BROWSERS_PATH=/root/.cache/ms-playwright
 
 EXPOSE 8080
 
