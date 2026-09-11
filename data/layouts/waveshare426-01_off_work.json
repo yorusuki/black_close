@@ -7,8 +7,8 @@
       "refresh_interval": 300,
       "refresh_policy": "full",
       "config": {
-        "title": "已下班，明天見",
-        "subtitle": "今天不再刷新；下一個工作日 08:00 後重新偵測。"
+        "title": "今天已登出人類模式",
+        "subtitle": "訊息明天再處理；現在只負責回家與放空。"
       }
     }
   ]

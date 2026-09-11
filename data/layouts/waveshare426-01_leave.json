@@ -8,7 +8,7 @@
       "refresh_policy": "full",
       "config": {
         "title": "今日請假 Zzz",
-        "subtitle": "今天不刷新；下一個工作日 08:00 後重新偵測。"
+        "subtitle": "行程已暫停；請把今天還給自己。"
       }
     }
   ]
