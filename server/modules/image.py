@@ -26,6 +26,7 @@ class ImageModule(BaseModule):
     description = "顯示素材庫裡的一張圖片（先在編輯器的「圖片素材庫」面板上傳）。"
     default_size = (160, 160)
     min_refresh_interval = 300
+    refresh_policy = "full"
     config_schema = [
         {"key": "asset_id", "label": "素材 ID（從圖片素材庫面板點選）", "type": "text", "default": ""},
         {"key": "fit", "label": "填滿方式（cover/contain/stretch）", "type": "text", "default": "cover"},

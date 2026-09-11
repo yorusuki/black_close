@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from . import assets, devices, frame, layouts, mock, modules, scenes
+from . import assets, attendance, devices, frame, layouts, mock, modules, scenes
 
 BLUEPRINTS = [
     devices.bp,
@@ -10,4 +10,5 @@ BLUEPRINTS = [
     frame.bp,
     mock.bp,
     assets.bp,
+    attendance.bp,
 ]

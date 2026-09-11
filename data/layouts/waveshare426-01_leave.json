@@ -1,0 +1,15 @@
+{
+  "elements": [
+    {
+      "instance_id": "leave-notice",
+      "module_id": "status_notice",
+      "x": 0, "y": 0, "w": 800, "h": 480, "z": 1,
+      "refresh_interval": 300,
+      "refresh_policy": "full",
+      "config": {
+        "title": "今日請假 Zzz",
+        "subtitle": "今天不刷新；下一個工作日 08:00 後重新偵測。"
+      }
+    }
+  ]
+}

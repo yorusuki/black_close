@@ -1,14 +1,13 @@
-"""頂部日期/時間列，對應 mockup 最上面那一條「THU 09/03      18:03」。"""
+"""頂部日期/時間列，例如「2026/09/11 星期五      18:03」。"""
 from __future__ import annotations
-
-import datetime
 
 from PIL import Image, ImageDraw
 
+from .. import config
 from .base import BaseModule
 from .drawing import load_font
 
-_WEEKDAY = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
+_WEEKDAY = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
 
 
 class ClockBarModule(BaseModule):
@@ -17,6 +16,7 @@ class ClockBarModule(BaseModule):
     description = "顯示星期/日期（靠左）與時間（靠右），底部有一條分隔線。"
     default_size = (800, 40)
     min_refresh_interval = 20
+    refresh_policy = "partial"
     always_rerender = True
     config_schema = [
         {"key": "time_format", "label": "時間格式", "type": "text", "default": "%H:%M"},
@@ -26,8 +26,8 @@ class ClockBarModule(BaseModule):
         w, h = size
         img = Image.new("RGB", size, "white")
         draw = ImageDraw.Draw(img)
-        now = datetime.datetime.now()
-        left = f"{_WEEKDAY[now.weekday()]} {now.strftime('%m/%d')}"
+        now = config.now_local()
+        left = f"{now.strftime('%Y/%m/%d')} {_WEEKDAY[now.weekday()]}"
         right = now.strftime(cfg.get("time_format", "%H:%M"))
         font = load_font(int(h * 0.5))
         draw.text((4, h * 0.15), left, fill="black", font=font)

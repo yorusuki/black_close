@@ -1,4 +1,4 @@
-"""通用「標題 + 多列 label/value」模組：對應 mockup 的「今日出勤」「剩餘特休」「本月生存紀錄」。
+"""通用「標題 + 多列 label/value」模組。
 
 config 範例：
 {
@@ -28,6 +28,7 @@ class StatPairModule(BaseModule):
     description = "標題 + 一組 label/value 列，數值可手動填或用網路請求取得。"
     default_size = (260, 160)
     min_refresh_interval = 60
+    refresh_policy = "partial"
     config_schema = [
         {"key": "title", "label": "標題", "type": "text", "default": ""},
         {"key": "rows", "label": "資料列（JSON 陣列）", "type": "json", "default": [

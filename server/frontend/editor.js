@@ -35,6 +35,8 @@ const state = {
   snapEnabled: true,
   gridSize: 4,
   assets: [],
+  layoutIds: [],
+  attendance: null,
 };
 
 const el = (id) => document.getElementById(id);
@@ -54,11 +56,17 @@ async function api(path, opts) {
 async function init() {
   state.modules = await api("/api/modules");
   renderModuleList();
+  await loadLayoutIds();
 
   state.devices = await api("/api/devices");
   const sel = el("device-select");
   sel.innerHTML = state.devices.map((d) => `<option value="${d.id}">${d.id}（${d.driver}）</option>`).join("");
   sel.addEventListener("change", () => selectDevice(sel.value));
+  el("layout-select").addEventListener("change", () => {
+    const layoutId = el("layout-select").value;
+    el("layout-id-input").value = layoutId;
+    loadLayout(layoutId);
+  });
 
   el("zoom-input").addEventListener("change", (e) => {
     // 使用者自己打縮放值 = 手動接管，之後視窗改變大小不會再自動幫他改掉。
@@ -75,6 +83,8 @@ async function init() {
   el("apply-props-btn").addEventListener("click", applyProps);
   el("delete-el-btn").addEventListener("click", deleteSelected);
   el("save-scenes-btn").addEventListener("click", saveScenes);
+  el("save-attendance-btn").addEventListener("click", saveAttendance);
+  el("attendance-on-leave").addEventListener("change", updateAttendanceFormState);
 
   el("snap-toggle").addEventListener("change", (e) => {
     state.snapEnabled = e.target.checked;
@@ -101,7 +111,14 @@ async function init() {
   }
 
   await loadAssets();
+  await loadAttendance();
   startPreviewLoop();
+}
+
+function setEditorStatus(message, kind = "") {
+  const node = el("editor-status");
+  node.textContent = message;
+  node.className = `editor-status ${kind}`;
 }
 
 async function selectDevice(deviceId) {
@@ -116,6 +133,29 @@ async function selectDevice(deviceId) {
   // 不然沿用上一個裝置的縮放倍率很容易一個爆版一個看不清楚。
   state.autoFit = true;
   applyFitZoom();
+  setEditorStatus(`已載入裝置 ${deviceId}`, "ok");
+}
+
+async function loadLayoutIds() {
+  state.layoutIds = await api("/api/layouts");
+  const select = el("layout-select");
+  select.replaceChildren();
+  for (const layoutId of state.layoutIds) {
+    const option = document.createElement("option");
+    option.value = layoutId;
+    option.textContent = friendlyLayoutName(layoutId);
+    select.appendChild(option);
+  }
+}
+
+function friendlyLayoutName(layoutId) {
+  const names = {
+    "waveshare426-01_dashboard": "工作中（打卡／請假）",
+    "waveshare426-01_off_work": "已下班（靜態全頁）",
+    "waveshare426-01_rest": "週末／假日（今日休假 Zzz）",
+    "waveshare426-01_leave": "請假（靜態全頁）",
+  };
+  return names[layoutId] || layoutId;
 }
 
 // ---------------- 縮放：符合可視範圍，不超出螢幕 ----------------
@@ -179,18 +219,20 @@ function applyGridBackground(canvas) {
 // ---------------- 模組面板 ----------------
 
 function renderModuleList() {
-  el("module-list").innerHTML = state.modules
-    .map(
-      (m) => `
-      <div class="module-item" data-module-id="${m.module_id}">
-        <b>${m.display_name}</b>
-        <span>${m.description || ""}</span>
-      </div>`
-    )
-    .join("");
-  el("module-list").querySelectorAll(".module-item").forEach((node) => {
-    node.addEventListener("click", () => addElement(node.dataset.moduleId));
-  });
+  const list = el("module-list");
+  list.replaceChildren();
+  for (const module of state.modules) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "module-item";
+    const title = document.createElement("b");
+    title.textContent = module.display_name;
+    const description = document.createElement("span");
+    description.textContent = module.description || "";
+    item.append(title, description);
+    item.addEventListener("click", () => addElement(module.module_id));
+    list.appendChild(item);
+  }
 }
 
 function defaultConfigFromSchema(manifest) {
@@ -214,6 +256,7 @@ function addElement(moduleId) {
     h: manifest.default_size[1],
     z: state.layout.elements.length,
     refresh_interval: manifest.min_refresh_interval,
+    refresh_policy: manifest.refresh_policy || "auto",
     config: defaultConfigFromSchema(manifest),
   });
   renderCanvas();
@@ -236,6 +279,8 @@ async function loadLayout(layoutId) {
     console.warn("layout 不存在，建立空白 layout：", e.message);
     state.layout = { elements: [] };
   }
+  el("layout-select").value = layoutId;
+  setEditorStatus(`正在編輯：${friendlyLayoutName(layoutId)}`);
   renderCanvas();
 }
 
@@ -251,7 +296,9 @@ async function saveLayout() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(state.layout),
   });
-  alert(`已儲存 layout「${layoutId}」`);
+  if (!state.layoutIds.includes(layoutId)) await loadLayoutIds();
+  el("layout-select").value = layoutId;
+  setEditorStatus(`已儲存：${friendlyLayoutName(layoutId)}`, "ok");
 }
 
 // ---------------- 畫布渲染 / 拖曳縮放 ----------------
@@ -283,7 +330,10 @@ function renderCanvas() {
     div.style.width = `${item.w}px`;
     div.style.height = `${item.h}px`;
     div.style.zIndex = String(item.z || 0);
-    div.innerHTML = `<span class="el-label">${item.module_id}</span>`;
+    const label = document.createElement("span");
+    label.className = "el-label";
+    label.textContent = item.module_id;
+    div.appendChild(label);
 
     const handle = document.createElement("div");
     handle.className = "resize-handle";
@@ -376,7 +426,57 @@ function fillPropsForm(item) {
   el("p-h").value = item.h;
   el("p-z").value = item.z || 0;
   el("p-refresh").value = item.refresh_interval;
+  el("p-refresh-policy").value = item.refresh_policy || "auto";
   el("p-config").value = JSON.stringify(item.config || {}, null, 2);
+  renderConfigFields(item);
+}
+
+function renderConfigFields(item) {
+  const container = el("config-fields");
+  container.replaceChildren();
+  const manifest = state.modules.find((m) => m.module_id === item.module_id);
+  const fields = manifest?.config_schema || [];
+  if (!fields.length) return;
+  const config = item.config || {};
+  for (const field of fields) {
+    const label = document.createElement("label");
+    label.textContent = field.label || field.key;
+    let input;
+    if (field.type === "json") {
+      input = document.createElement("textarea");
+      input.rows = 3;
+      input.value = JSON.stringify(config[field.key] ?? field.default, null, 2);
+    } else {
+      input = document.createElement("input");
+      input.type = field.type === "number" ? "number" : "text";
+      input.value = config[field.key] ?? field.default ?? "";
+    }
+    input.dataset.configKey = field.key;
+    input.dataset.configType = field.type || "text";
+    input.addEventListener("input", syncRawConfigFromFields);
+    label.appendChild(input);
+    container.appendChild(label);
+  }
+}
+
+function syncRawConfigFromFields() {
+  let config;
+  try {
+    config = JSON.parse(el("p-config").value || "{}");
+  } catch (_) {
+    return;
+  }
+  for (const field of el("config-fields").querySelectorAll("[data-config-key]")) {
+    const key = field.dataset.configKey;
+    try {
+      config[key] = field.dataset.configType === "json"
+        ? JSON.parse(field.value || "null")
+        : field.dataset.configType === "number" ? Number(field.value) : field.value;
+    } catch (_) {
+      // JSON 尚在輸入中的不完整狀態先不覆寫原本設定，套用時會顯示明確錯誤。
+    }
+  }
+  el("p-config").value = JSON.stringify(config, null, 2);
 }
 
 function applyProps() {
@@ -388,6 +488,7 @@ function applyProps() {
   item.h = parseInt(el("p-h").value, 10) || 10;
   item.z = parseInt(el("p-z").value, 10) || 0;
   item.refresh_interval = parseInt(el("p-refresh").value, 10) || 30;
+  item.refresh_policy = el("p-refresh-policy").value;
   try {
     item.config = JSON.parse(el("p-config").value);
   } catch (e) {
@@ -395,6 +496,7 @@ function applyProps() {
     return;
   }
   renderCanvas();
+  setEditorStatus("已套用元件設定", "ok");
 }
 
 function deleteSelected() {
@@ -404,6 +506,55 @@ function deleteSelected() {
   el("props-form").hidden = true;
   el("props-empty").hidden = false;
   renderCanvas();
+}
+
+// ---------------- 出勤／請假 ----------------
+
+function updateAttendanceFormState() {
+  const leave = el("attendance-on-leave").checked;
+  el("attendance-clock-in").disabled = leave;
+  el("attendance-clock-out").disabled = leave;
+  el("attendance-leave-note").disabled = !leave;
+}
+
+function showAttendance(snapshot) {
+  state.attendance = snapshot;
+  el("attendance-clock-in").value = snapshot.clock_in || "";
+  el("attendance-clock-out").value = snapshot.clock_out || "";
+  el("attendance-on-leave").checked = Boolean(snapshot.on_leave);
+  el("attendance-leave-note").value = snapshot.leave_note || "";
+  const labels = { pending: "尚未打卡", working: "上班中", off_work: "今日已下班", leave: "今日請假" };
+  el("attendance-summary").textContent = `${snapshot.date}：${labels[snapshot.status] || snapshot.status}`;
+  updateAttendanceFormState();
+}
+
+async function loadAttendance() {
+  try {
+    showAttendance(await api("/api/attendance/today"));
+  } catch (error) {
+    el("attendance-summary").textContent = `出勤資料讀取失敗：${error.message}`;
+  }
+}
+
+async function saveAttendance() {
+  const payload = {
+    clock_in: el("attendance-clock-in").value || null,
+    clock_out: el("attendance-clock-out").value || null,
+    on_leave: el("attendance-on-leave").checked,
+    leave_note: el("attendance-leave-note").value.trim(),
+  };
+  try {
+    const saved = await api("/api/attendance/today", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    showAttendance(saved);
+    setEditorStatus("今日打卡／請假狀態已儲存", "ok");
+  } catch (error) {
+    setEditorStatus("出勤資料儲存失敗", "error");
+    alert(`儲存失敗：${error.message}`);
+  }
 }
 
 // ---------------- 情境設定 ----------------
@@ -440,7 +591,7 @@ function startPreviewLoop() {
       const meta = await api(`/api/devices/${state.deviceId}/frame-meta`);
       el("preview-meta").textContent =
         `scene: ${meta.scene || "(default)"} / layout: ${meta.layout_id || "-"} / ` +
-        `refresh: ${meta.refresh_mode} / dirty: ${meta.dirty_boxes.length}`;
+        `refresh: ${meta.refresh_mode} / dirty: ${meta.dirty_boxes.length} / partial: ${meta.partial_count_since_full || 0}`;
     } catch (e) {
       el("preview-meta").textContent = "預覽讀取失敗：" + e.message;
     }

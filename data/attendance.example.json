@@ -1,0 +1,10 @@
+{
+  "records": {
+    "2026-09-11": {
+      "clock_in": "09:00",
+      "clock_out": null,
+      "on_leave": false,
+      "leave_note": ""
+    }
+  }
+}

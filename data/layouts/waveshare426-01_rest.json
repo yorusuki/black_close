@@ -1,0 +1,15 @@
+{
+  "elements": [
+    {
+      "instance_id": "rest-notice",
+      "module_id": "status_notice",
+      "x": 0, "y": 0, "w": 800, "h": 480, "z": 1,
+      "refresh_interval": 300,
+      "refresh_policy": "full",
+      "config": {
+        "title": "今日休假 Zzz",
+        "subtitle": "週末／國定假日不刷新，盡情休息。"
+      }
+    }
+  ]
+}

@@ -35,6 +35,7 @@ class MascotModule(BaseModule):
     default_size = (800, 60)
     min_refresh_interval = 5
     supports_partial = True
+    refresh_policy = "partial"
     always_rerender = True
     config_schema = [
         {"key": "frames", "label": "影格（JSON 陣列，每項含 face/line）", "type": "json",

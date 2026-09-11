@@ -35,6 +35,12 @@ body {
 .topbar h1 { font-size: 16px; margin: 0; white-space: nowrap; }
 .topbar-controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 13px; }
 .topbar-controls label { display: flex; gap: 4px; align-items: center; }
+.editor-status {
+  border: 1px solid var(--border); border-radius: 999px; padding: 3px 8px;
+  font-size: 12px; color: var(--muted); background: var(--bg);
+}
+.editor-status.ok { color: #26723d; border-color: #79ae87; }
+.editor-status.error { color: var(--accent); border-color: var(--accent); }
 input, select, textarea, button {
   font: inherit;
   color: inherit;
@@ -66,12 +72,14 @@ button.danger { background: transparent; border-color: var(--accent); color: var
 .hint { font-size: 12px; color: var(--muted); line-height: 1.5; }
 
 #module-list .module-item {
+  display: block; width: 100%; text-align: left;
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 8px;
   margin-bottom: 8px;
-  cursor: grab;
+  cursor: pointer;
 }
+#module-list .module-item:hover { border-color: var(--accent); }
 #module-list .module-item b { display: block; font-size: 13px; }
 #module-list .module-item span { font-size: 11px; color: var(--muted); }
 
@@ -120,6 +128,19 @@ button.danger { background: transparent; border-color: var(--accent); color: var
 #props-form .row { display: flex; gap: 8px; }
 #props-form .row label { flex: 1; }
 #props-form textarea { font-family: ui-monospace, monospace; font-size: 11px; }
+.config-fields { border-top: 1px solid var(--border); margin-top: 10px; padding-top: 10px; }
+.config-fields textarea { width: 100%; margin-top: 2px; font-family: ui-monospace, monospace; font-size: 11px; }
+.advanced-config { margin: 10px 0; font-size: 12px; color: var(--muted); }
+.advanced-config summary { cursor: pointer; margin-bottom: 6px; }
+.advanced-config label { color: var(--text); margin-top: 8px; }
+.attendance-panel { border-top: 1px solid var(--border); margin-top: 16px; padding-top: 14px; }
+.attendance-panel h2 { margin-bottom: 6px; }
+.attendance-panel label { display: block; font-size: 12px; margin: 8px 0; }
+.attendance-panel input:not([type="checkbox"]) { display: block; width: 100%; margin-top: 3px; }
+.attendance-panel .row { display: flex; gap: 8px; }
+.attendance-panel .row label { flex: 1; }
+.attendance-panel .check-label { display: flex; align-items: center; gap: 6px; }
+.attendance-panel button { width: 100%; margin-top: 4px; }
 
 .asset-upload-row { display: flex; gap: 6px; margin-bottom: 8px; }
 .asset-upload-row input[type="file"] { flex: 1; min-width: 0; }
@@ -153,3 +174,13 @@ button.danger { background: transparent; border-color: var(--accent); color: var
 
 #preview-img { width: 100%; border: 1px solid var(--border); border-radius: 6px; margin-top: 6px; background: #fff; }
 #scenes-json { width: 100%; font-family: ui-monospace, monospace; font-size: 11px; margin-bottom: 8px; }
+
+@media (max-width: 1040px) {
+  .layout { grid-template-columns: 200px minmax(0, 1fr); }
+  .props-panel { grid-column: 1 / -1; max-height: none; }
+}
+@media (max-width: 680px) {
+  .layout { grid-template-columns: 1fr; padding: 8px; }
+  .modules-panel, .props-panel { max-height: none; }
+  .canvas-wrap { max-height: 60vh; padding: 12px; }
+}

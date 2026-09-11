@@ -50,6 +50,7 @@ class ProgressBarModule(BaseModule):
     description = "標題 + 數值進度條 + 選填的附註文字列，數值可手動填或用網路請求取得。"
     default_size = (380, 160)
     min_refresh_interval = 30
+    refresh_policy = "partial"
     config_schema = [
         {"key": "title", "label": "標題", "type": "text", "default": "進度"},
         {"key": "value_source", "label": "數值來源", "type": "json",

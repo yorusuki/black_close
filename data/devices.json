@@ -22,9 +22,15 @@
     ],
     "color_mode": "1bit",
     "partial_refresh": true,
-    "force_full_refresh_every": 20,
+    "full_refresh_interval_seconds": 1200,
     "min_full_refresh_interval_seconds": 60,
     "default_layout_id": "waveshare426-01_dashboard",
-    "note": "硬體尚未到貨。color_mode 先設 1bit 是為了讓局部刷新（吉祥物動畫）可用；4gray 模式沒有局部刷新，之後如果想要灰階可以改，但動畫就會跟著整幅刷新頻率走。"
+    "attendance_scenes": {
+      "work_layout_id": "waveshare426-01_dashboard",
+      "off_work_layout_id": "waveshare426-01_off_work",
+      "rest_layout_id": "waveshare426-01_rest",
+      "leave_layout_id": "waveshare426-01_leave"
+    },
+    "note": "1bit 模式可使用局刷。工作畫面於有變化時局刷，至少相隔 20 分鐘的下一次變化改為全刷；下班、週末與請假使用靜態全頁，不會自行刷新。"
   }
 ]

@@ -8,70 +8,23 @@
       "config": {"time_format": "%H:%M"}
     },
     {
-      "instance_id": "progress-survival",
-      "module_id": "progress_bar",
-      "x": 0, "y": 52, "w": 452, "h": 196, "z": 1,
+      "instance_id": "attendance-today",
+      "module_id": "attendance",
+      "x": 80, "y": 92, "w": 640, "h": 220, "z": 1,
       "refresh_interval": 30,
-      "config": {
-        "title": "今日生存進度",
-        "value_source": {"type": "time_progress", "start": "09:00", "end": "18:30"},
-        "min": 0, "max": 100, "unit": "%",
-        "footer_lines": [
-          {"text": "距離下班"},
-          {"big": true, "value_source": {"type": "time_until", "target": "18:30"}},
-          {"text": "預計 18:30 解脫"}
-        ]
-      }
-    },
-    {
-      "instance_id": "stat-attendance",
-      "module_id": "stat_pair",
-      "x": 460, "y": 52, "w": 340, "h": 94, "z": 1,
-      "refresh_interval": 300,
-      "config": {
-        "title": "今日出勤",
-        "rows": [
-          {"label": "上班", "value_source": {"type": "manual", "value": "09:02"}},
-          {"label": "工時", "value_source": {"type": "manual", "value": "08:31"}}
-        ]
-      }
-    },
-    {
-      "instance_id": "stat-leave",
-      "module_id": "stat_pair",
-      "x": 460, "y": 150, "w": 340, "h": 98, "z": 1,
-      "refresh_interval": 3600,
-      "config": {
-        "title": "剩餘特休",
-        "rows": [
-          {"label": "", "big": true, "suffix": " DAYS",
-           "value_source": {"type": "http", "url": "/api/mock/leave-balance", "path": "data.days", "fallback": 0}}
-        ]
-      }
+      "refresh_policy": "partial",
+      "config": {"title": "上下班打卡與請假"}
     },
     {
       "instance_id": "progress-meteor",
       "module_id": "progress_bar",
-      "x": 0, "y": 252, "w": 452, "h": 160, "z": 1,
+      "x": 150, "y": 330, "w": 500, "h": 80, "z": 1,
       "refresh_interval": 300,
       "config": {
         "title": "METEOR LEVEL",
         "value_source": {"type": "manual", "value": 6.8},
         "min": 0, "max": 10, "unit": "",
         "footer_lines": []
-      }
-    },
-    {
-      "instance_id": "stat-monthly",
-      "module_id": "stat_pair",
-      "x": 460, "y": 252, "w": 340, "h": 160, "z": 1,
-      "refresh_interval": 3600,
-      "config": {
-        "title": "本月生存紀錄",
-        "rows": [
-          {"label": "出勤", "value_source": {"type": "manual", "value": "18 / 22"}},
-          {"label": "準時下班", "value_source": {"type": "manual", "value": "3 次"}}
-        ]
       }
     },
     {

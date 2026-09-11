@@ -7,16 +7,20 @@ _MODULE_CLASSES 清單即可（Python 不像有些語言能單靠「檔案存在
 """
 from __future__ import annotations
 
+from .attendance import AttendanceModule
 from .clock_bar import ClockBarModule
 from .image import ImageModule
 from .mascot import MascotModule
 from .progress_bar import ProgressBarModule
 from .stat_pair import StatPairModule
+from .status_notice import StatusNoticeModule
 
 _MODULE_CLASSES = [
     ClockBarModule,
     ProgressBarModule,
     StatPairModule,
+    AttendanceModule,
+    StatusNoticeModule,
     MascotModule,
     ImageModule,
 ]

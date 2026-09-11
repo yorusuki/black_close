@@ -13,7 +13,10 @@
     <label>裝置
       <select id="device-select"></select>
     </label>
-    <label>Layout id
+    <label>頁面
+      <select id="layout-select"></select>
+    </label>
+    <label title="保留給自訂頁面用；一般請從上方頁面選單切換">進階 Layout id
       <input id="layout-id-input" type="text" />
     </label>
     <button id="load-layout-btn">載入</button>
@@ -23,6 +26,7 @@
     </label>
     <button id="fit-zoom-btn" title="縮放到剛好塞進可視範圍，不會超出螢幕">符合視窗</button>
     <span id="zoom-readout" class="hint"></span>
+    <span id="editor-status" class="editor-status" aria-live="polite">準備中</span>
     <label title="拖曳/縮放元件時，x/y/w/h 自動貼齊格線">
       <input id="snap-toggle" type="checkbox" checked /> 格線貼齊
     </label>
@@ -35,7 +39,7 @@
 <main class="layout">
   <aside class="panel modules-panel">
     <h2>模組面板</h2>
-    <p class="hint">拖曳或點擊新增到畫布；新增功能只要在 server/modules/ 加檔案並在 registry.py 註冊，這裡就會自動出現。</p>
+    <p class="hint">點擊即可新增。選取元件後，在右側設定內容、刷新政策與尺寸。</p>
     <div id="module-list"></div>
   </aside>
 
@@ -63,14 +67,36 @@
         <label>z-index <input id="p-z" type="number" /></label>
         <label>刷新間隔(秒) <input id="p-refresh" type="number" /></label>
       </div>
-      <label>config（JSON）
-        <textarea id="p-config" rows="10"></textarea>
+      <label>刷新政策
+        <select id="p-refresh-policy">
+          <option value="auto">自動（依裝置能力）</option>
+          <option value="partial">優先局刷</option>
+          <option value="full">變動時全刷</option>
+        </select>
       </label>
+      <div id="config-fields" class="config-fields"></div>
+      <details class="advanced-config">
+        <summary>進階設定 JSON</summary>
+        <label>config（JSON）<textarea id="p-config" rows="10"></textarea></label>
+      </details>
       <div class="row">
         <button type="button" id="apply-props-btn" class="primary">套用</button>
         <button type="button" id="delete-el-btn" class="danger">刪除元件</button>
       </div>
     </form>
+
+    <section class="attendance-panel">
+      <h2>今日打卡與請假</h2>
+      <p id="attendance-summary" class="hint">讀取中…</p>
+      <div class="row">
+        <label>上班 <input id="attendance-clock-in" type="time" /></label>
+        <label>下班 <input id="attendance-clock-out" type="time" /></label>
+      </div>
+      <label class="check-label"><input id="attendance-on-leave" type="checkbox" /> 今日請假</label>
+      <label>請假說明（選填）<input id="attendance-leave-note" type="text" maxlength="80" placeholder="例如：特休" /></label>
+      <button type="button" id="save-attendance-btn" class="primary">儲存今日狀態</button>
+      <p class="hint">上下班皆填寫後，Pi 下次輪詢（預設最多 30 秒）會切至靜態下班頁；週末／假日也不會持續刷新。</p>
+    </section>
 
     <h2>圖片素材庫</h2>
     <p class="hint">上傳圖片後，點縮圖套用到「目前選取的圖片元件」（要先加一個「圖片」模組元件並選取它）。</p>
@@ -85,7 +111,7 @@
     <img id="preview-img" alt="裝置畫面預覽" />
     <div id="preview-meta" class="hint"></div>
 
-    <h2>情境設定（JSON）</h2>
+    <h2>進階情境設定（JSON）</h2>
     <p class="hint">condition 支援 weekdays([0-6], Mon=0)、time_range(["HH:MM","HH:MM"])、is_holiday(true/false)。多筆符合時取 priority 最大者。</p>
     <textarea id="scenes-json" rows="10"></textarea>
     <button id="save-scenes-btn">儲存情境設定</button>

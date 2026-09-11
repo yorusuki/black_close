@@ -26,6 +26,10 @@ class BaseModule:
     #: 跟著裝置原本的整幅刷新頻率一起更新，不會額外觸發整幅刷新。
     supports_partial: bool = False
 
+    #: 預設刷新政策。auto 依裝置能力決定；partial 盡量局刷；full 則只要此模組變動
+    #: 就要求整幅刷新。layout element 可用同名欄位覆寫，讓排版者以用途決定政策。
+    refresh_policy: str = "auto"
+
     #: True 表示每個 tick 都要重新呼叫 render()（例如吉祥物動畫用時鐘挑影格）。
     #: 仍然只有在 supports_partial 且裝置支援時才會真的觸發面板刷新。
     always_rerender: bool = False
@@ -50,5 +54,6 @@ class BaseModule:
             "default_size": list(self.default_size),
             "min_refresh_interval": self.min_refresh_interval,
             "supports_partial": self.supports_partial,
+            "refresh_policy": self.refresh_policy,
             "config_schema": self.config_schema,
         }

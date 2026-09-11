@@ -7,17 +7,20 @@ Pi 本機模式：AUTH_ENABLED=0（預設），不做任何驗證。
 
 from __future__ import annotations
 import os
+import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(os.environ.get("EPAGERPI_DATA_DIR", BASE_DIR / "data"))
+TIMEZONE = ZoneInfo(os.environ.get("EPAGERPI_TIMEZONE", "Asia/Taipei"))
 
 HOST = os.environ.get("EPAGERPI_HOST", "0.0.0.0")
 PORT = int(os.environ.get("EPAGERPI_PORT", "8080"))
 
 # 給模組的 http value_source 用：如果 url 是「/api/...」這種相對路徑，就補上這個
 # base url 變成完整網址（模組要打自己這台伺服器的其他端點時很方便，例如範例 layout
-# 裡「剩餘特休」打 /api/mock/leave-balance）。要接外部 API 就直接填完整網址即可，
+# 裡的內部 API）。要接外部 API 就直接填完整網址即可，
 # 不受這個設定影響。
 SELF_BASE_URL = os.environ.get("EPAGERPI_SELF_BASE_URL", f"http://127.0.0.1:{PORT}")
 
@@ -43,6 +46,11 @@ PREVIEW_DIR = DATA_DIR / "preview"
 # 都是 repo 根目錄）：UPS daemon 寫、progress_bar/stat_pair 模組的
 # value_source type="battery" 讀，避免重複開 I2C。
 BATTERY_STATE_PATH = DATA_DIR / "runtime" / "battery.json"
+
+
+def now_local() -> datetime.datetime:
+    """回傳系統顯示與情境判斷共用的本地時間（不帶 tzinfo，與既有 API 相容）。"""
+    return datetime.datetime.now(TIMEZONE).replace(tzinfo=None)
 
 
 def ensure_dirs():
