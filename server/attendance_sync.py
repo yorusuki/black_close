@@ -122,6 +122,15 @@ def record_from_snapshot(snapshot: dict[str, Any], current: dict[str, Any]) -> d
     })
 
 
+def _record_log_values(record: dict[str, Any]) -> tuple[str, str, bool]:
+    """供使用者核對同步結果；刻意排除姓名、請假事由與所有登入資訊。"""
+    return (
+        record.get("clock_in") or "未打卡",
+        record.get("clock_out") or "未打卡",
+        bool(record.get("on_leave")),
+    )
+
+
 def sync_once(
     now: datetime.datetime | None = None,
     *,
@@ -142,11 +151,16 @@ def sync_once(
         log.warning("出勤同步失敗：外部資料格式不合法")
         return False
 
+    clock_in, clock_out, on_leave = _record_log_values(updated)
+    log.info(
+        "出勤同步已解析：window=%s 上班=%s 下班=%s 今日請假=%s",
+        window, clock_in, clock_out, "是" if on_leave else "否",
+    )
     if updated == current:
-        log.info("出勤同步完成：window=%s，資料未變更", window)
+        log.info("出勤同步輸出：window=%s，資料未變更", window)
         return False
     attendance.save_record(now.date(), updated)
-    log.info("出勤同步完成：window=%s，資料已更新", window)
+    log.info("出勤同步輸出：window=%s，已寫入出勤資料", window)
     return True
 
 
