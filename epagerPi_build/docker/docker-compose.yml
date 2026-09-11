@@ -1,0 +1,40 @@
+services:
+  epagerpi:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: epagerpi-server:latest
+    restart: unless-stopped
+    environment:
+      EPAGERPI_AUTH_ENABLED: "1"
+      EPAGERPI_AUTH_USER: ${EPAGERPI_AUTH_USER:-admin}
+      EPAGERPI_AUTH_PASS: ${EPAGERPI_AUTH_PASS:?請先在 docker/.env 設定}
+      EPAGERPI_API_TOKEN: ${EPAGERPI_API_TOKEN:?請先在 docker/.env 設定，裝置代理輪詢時要帶這組 token}
+    volumes:
+      - ../data:/app/data
+    expose:
+      - "8080"
+    networks: [epagerpi]
+
+  # 用 Caddy 做反向代理 + 自動 HTTPS（線上版才需要的「傳輸也要驗證/加密」）。
+  # 只是本機測試、還沒有網域名稱的話，可以先不啟用這個 service，直接
+  # `docker compose up epagerpi` 然後用 http://<主機IP>:8080 測（記得防火牆別開放給外網）。
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [epagerpi]
+    networks: [epagerpi]
+
+networks:
+  epagerpi:
+
+volumes:
+  caddy_data:
+  caddy_config:

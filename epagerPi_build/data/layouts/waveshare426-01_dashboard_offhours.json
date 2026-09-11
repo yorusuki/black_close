@@ -1,0 +1,50 @@
+{
+  "elements": [
+    {
+      "instance_id": "clock_bar-top",
+      "module_id": "clock_bar",
+      "x": 0, "y": 0, "w": 800, "h": 48, "z": 10,
+      "refresh_interval": 20,
+      "config": {"time_format": "%H:%M"}
+    },
+    {
+      "instance_id": "status-banner",
+      "module_id": "stat_pair",
+      "x": 0, "y": 90, "w": 800, "h": 180, "z": 1,
+      "refresh_interval": 300,
+      "config": {
+        "title": "",
+        "rows": [
+          {"label": "", "big": true, "value_source": {"type": "manual", "value": "已經下班了 🎉"}},
+          {"label": "", "value_source": {"type": "manual", "value": "訊息明天上班再看"}}
+        ]
+      }
+    },
+    {
+      "instance_id": "progress-week",
+      "module_id": "progress_bar",
+      "x": 150, "y": 300, "w": 500, "h": 96, "z": 1,
+      "refresh_interval": 3600,
+      "config": {
+        "title": "本週工時進度",
+        "value_source": {"type": "manual", "value": 62},
+        "min": 0, "max": 100, "unit": "%",
+        "footer_lines": []
+      }
+    },
+    {
+      "instance_id": "mascot-bottom",
+      "module_id": "mascot",
+      "x": 0, "y": 416, "w": 800, "h": 64, "z": 20,
+      "refresh_interval": 5,
+      "config": {
+        "interval_seconds": 8,
+        "frames": [
+          {"face": "（´▽｀）", "line": "已經下班了，不會再理訊息了。"},
+          {"face": "(-ω-)", "line": "明天再說。"},
+          {"face": "(｡-ω-)zzz", "line": "電力也要休息一下。"}
+        ]
+      }
+    }
+  ]
+}

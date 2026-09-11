@@ -1,0 +1,5 @@
+# 把 your-domain.example.com 換成你實際擁有、DNS 已指到這台主機的網域名稱，
+# Caddy 會自動跟 Let's Encrypt 要憑證、自動處理 HTTPS 續期，不用手動管憑證。
+your-domain.example.com {
+    reverse_proxy epagerpi:8080
+}

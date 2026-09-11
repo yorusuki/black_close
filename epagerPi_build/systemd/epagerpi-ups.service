@@ -1,0 +1,17 @@
+[Unit]
+Description=epagerPi UPS 電量看門狗（低電量自動關機）
+After=network.target
+
+[Service]
+Type=simple
+# 需要能執行 systemctl poweroff，先用 root 簡化權限設定；
+# 要收斂權限的話可改用一般使用者 + polkit 規則允許該使用者觸發 poweroff。
+User=root
+WorkingDirectory=/home/pi/epagerPi
+Environment=PYTHONPATH=/home/pi/epagerPi
+ExecStart=/usr/bin/python3 -m device_agent.ups.ups_daemon
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,26 @@
+# 複製這份成 device_agent/config.yaml 後依實際情況修改。
+
+# 對應 server/data/devices.json 裡的裝置 id
+device_id: phat-01
+
+# "local"：跟 server 同一台機器/同一個 Python 環境（Pi all-in-one 模式，
+#          這個檔案給 UPS daemon 讀 device_id 用，畫面刷新由 server/scheduler.py 直接處理）。
+# 網址（如 "https://your-server.example.com"）：split 模式，agent.py 會用 HTTP 輪詢這個網址
+#          的 /api/devices/<device_id>/frame.png。
+render_endpoint: local
+
+# render_endpoint 為網址時，多久輪詢一次（秒）；沒有伺服器提示更短間隔時的預設值
+poll_interval_seconds: 30
+
+# render_endpoint 為網址、且線上版有開驗證（AUTH_ENABLED=1）時填入，會帶在
+# Authorization: Bearer <api_token>
+api_token: ""
+
+# ---- UPS 電量看門狗 ----
+ups:
+  enabled: true
+  i2c_address: 0x43
+  poll_interval_seconds: 30
+  shutdown_threshold_percent: 35
+  # 連續幾次低於門檻才真的觸發關機，避免單次雜訊誤判
+  shutdown_confirm_reads: 3

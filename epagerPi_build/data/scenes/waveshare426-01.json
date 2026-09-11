@@ -1,0 +1,30 @@
+[
+  {
+    "id": "holiday",
+    "name": "假日",
+    "priority": 100,
+    "condition": {"is_holiday": true},
+    "layout_id": "waveshare426-01_dashboard_offhours"
+  },
+  {
+    "id": "weekend",
+    "name": "週末",
+    "priority": 90,
+    "condition": {"weekdays": [5, 6]},
+    "layout_id": "waveshare426-01_dashboard_offhours"
+  },
+  {
+    "id": "weekday_work",
+    "name": "平日上班時段",
+    "priority": 50,
+    "condition": {"weekdays": [0, 1, 2, 3, 4], "time_range": ["08:30", "18:30"]},
+    "layout_id": "waveshare426-01_dashboard"
+  },
+  {
+    "id": "weekday_offhours",
+    "name": "平日下班後／清晨",
+    "priority": 40,
+    "condition": {"weekdays": [0, 1, 2, 3, 4]},
+    "layout_id": "waveshare426-01_dashboard_offhours"
+  }
+]

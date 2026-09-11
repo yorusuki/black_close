@@ -1,0 +1,30 @@
+[
+  {
+    "id": "phat-01",
+    "driver": "inky_phat",
+    "resolution": [
+      212,
+      104
+    ],
+    "color_mode": "3color",
+    "accent_color": "red",
+    "partial_refresh": false,
+    "min_full_refresh_interval_seconds": 300,
+    "default_layout_id": "phat-01_compact",
+    "note": "目前實際擁有的硬體。Inky 官方驅動只有整幅刷新，動畫類模組會跟著這裡的整幅刷新間隔一起更新，不會額外頻繁刷新。"
+  },
+  {
+    "id": "waveshare426-01",
+    "driver": "waveshare_4in26",
+    "resolution": [
+      800,
+      480
+    ],
+    "color_mode": "1bit",
+    "partial_refresh": true,
+    "force_full_refresh_every": 20,
+    "min_full_refresh_interval_seconds": 60,
+    "default_layout_id": "waveshare426-01_dashboard",
+    "note": "硬體尚未到貨。color_mode 先設 1bit 是為了讓局部刷新（吉祥物動畫）可用；4gray 模式沒有局部刷新，之後如果想要灰階可以改，但動畫就會跟著整幅刷新頻率走。"
+  }
+]
