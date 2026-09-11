@@ -1,0 +1,4 @@
+# 雲端同步服務專用；Pi 不安裝無頭瀏覽器套件。
+-r requirements.txt
+playwright>=1.60
+python-dotenv>=1.0
