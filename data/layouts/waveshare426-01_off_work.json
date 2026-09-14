@@ -4,11 +4,21 @@
       "instance_id": "off-work-notice",
       "module_id": "status_notice",
       "x": 0, "y": 0, "w": 800, "h": 480, "z": 1,
-      "refresh_interval": 300,
-      "refresh_policy": "full",
+      "refresh_interval": 60,
+      "refresh_policy": "partial",
       "config": {
-        "title": "今天已登出人類模式",
-        "subtitle": "訊息明天再處理；現在只負責回家與放空。"
+        "title": "今天辛苦了",
+        "messages": [
+          "今天的待辦，明天的我會處理。",
+          "下班打卡完成，現在開始把腦袋還給自己。",
+          "工作模式已收好，回家模式正在載入。",
+          "通知先靜音，晚餐和休息優先。",
+          "今天已盡力，剩下的留給明天。",
+          "離開座位成功，今晚不談 KPI。",
+          "下班不是逃跑，是正常結束營業。",
+          "辛苦了，現在可以安心放空。"
+        ],
+        "interval_seconds": 60
       }
     }
   ]
