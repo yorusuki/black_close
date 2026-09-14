@@ -46,6 +46,7 @@ def _resolve_for_render(source: dict | None, network_value, default=None):
 
 class ProgressBarModule(BaseModule):
     module_id = "progress_bar"
+    category = "data"
     display_name = "進度條 / 量表"
     description = "標題 + 數值進度條 + 選填的附註文字列，數值可手動填或用網路請求取得。"
     default_size = (380, 160)

@@ -12,6 +12,7 @@ _WEEKDAY = ["星期一", "星期二", "星期三", "星期四", "星期五", "�
 
 class ClockBarModule(BaseModule):
     module_id = "clock_bar"
+    category = "status"
     display_name = "頂部日期時間列"
     description = "顯示星期/日期（靠左）與時間（靠右），底部有一條分隔線。"
     default_size = (800, 40)

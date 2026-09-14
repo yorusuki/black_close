@@ -1,11 +1,13 @@
 """Authenticated management API. All object lookups are owner-scoped."""
 from __future__ import annotations
 
+from io import BytesIO
 import mimetypes
 
 from flask import Blueprint, jsonify, request, send_file, session
 
 from .. import assets, auth, config, workspace_store
+from ..render.compositor import render_from_elements
 
 bp = Blueprint("workspace", __name__, url_prefix="/api/workspace")
 
@@ -55,6 +57,24 @@ def rotate_token(device_id):
     if not token:
         return jsonify({"error": "not_found"}), 404
     return jsonify({"device_id": device_id, "token": token, "warning": "此 token 僅顯示這一次。"})
+
+
+@bp.get("/devices/<device_id>/preview")
+@auth.require_user
+def preview_device_page(device_id):
+    page_id = request.args.get("page_id", "")
+    if not page_id:
+        return jsonify({"error": "missing_page_id"}), 400
+    resolved = workspace_store.preview_layout(_user_id(), device_id, page_id)
+    if not resolved:
+        return jsonify({"error": "not_found"}), 404
+    image, meta = render_from_elements(resolved)
+    body = BytesIO()
+    image.save(body, format="PNG")
+    body.seek(0)
+    response = send_file(body, mimetype="image/png", max_age=0)
+    response.headers["X-Preview-Refresh-Mode"] = meta["refresh_mode"]
+    return response
 
 
 @bp.get("/pages")

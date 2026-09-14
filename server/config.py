@@ -1,8 +1,7 @@
-"""集中管理環境變數設定。
+"""集中管理 Server 環境變數設定。
 
-Pi 本機模式：AUTH_ENABLED=0（預設），不做任何驗證。
-線上 Docker 模式：AUTH_ENABLED=1，搭配 AUTH_USER/AUTH_PASS（網頁編輯器用 Basic Auth）
-以及 API_TOKEN（裝置代理 / 其他程式呼叫 API 用 Bearer token）。
+線上 Docker 預設採 LINE Login 與每台 Pi 的 device token；legacy Basic Auth／
+全域 Bearer token 僅供短期相容舊 agent。Pi 本機設定在 device_agent/config.yaml。
 """
 
 from __future__ import annotations

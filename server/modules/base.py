@@ -13,6 +13,8 @@ class BaseModule:
     module_id: str = "base"
     display_name: str = "Base"
     description: str = ""
+    # 管理台用的功能分類。前端依此自動分組，新模組只要在 class 設定分類即可。
+    category: str = "other"
 
     #: 畫布上預設寬高（px），使用者可自行拖曳調整
     default_size: tuple[int, int] = (120, 40)
@@ -51,6 +53,7 @@ class BaseModule:
             "module_id": self.module_id,
             "display_name": self.display_name,
             "description": self.description,
+            "category": self.category,
             "default_size": list(self.default_size),
             "min_refresh_interval": self.min_refresh_interval,
             "supports_partial": self.supports_partial,

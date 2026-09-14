@@ -17,6 +17,7 @@ from . import config, store
 MODEL_IDS = {"inky_phat", "waveshare_4in26", "mock"}
 _PLACEHOLDER_USER_ID = "legacy-unassigned"
 _MIGRATION_KEY = "legacy_json_v1"
+_ONLINE_AFTER_SECONDS = 180
 
 
 def _path() -> Path:
@@ -243,10 +244,54 @@ def _public_device(row: sqlite3.Row) -> dict:
     return out
 
 
+def _connection_state(latest: sqlite3.Row | None, now: dt.datetime | None = None) -> dict:
+    """將最後一次已驗證的 Pi telemetry 轉為管理台可顯示的連線摘要。
+
+    這不是額外 heartbeat；Pi 每次成功取得 layout 後既有的 telemetry 就是資料來源。
+    reported_at 一律以 Server 接收時間為準，避免 Pi 時鐘不準造成錯誤的在線判斷。
+    """
+    if latest is None:
+        return {"state": "unknown", "last_seen_at": None, "refresh_mode": None}
+    try:
+        seen_at = dt.datetime.fromisoformat(latest["reported_at"])
+        if seen_at.tzinfo is None:
+            seen_at = seen_at.replace(tzinfo=dt.timezone.utc)
+    except (TypeError, ValueError):
+        return {"state": "unknown", "last_seen_at": None, "refresh_mode": None}
+    payload = _parse_json(latest["payload_json"], {})
+    reference_time = now or dt.datetime.now(dt.timezone.utc)
+    age_seconds = max(0, (reference_time - seen_at).total_seconds())
+    refresh_mode = payload.get("refresh_mode") if isinstance(payload, dict) else None
+    return {
+        "state": "online" if age_seconds <= _ONLINE_AFTER_SECONDS else "offline",
+        "last_seen_at": latest["reported_at"],
+        "refresh_mode": refresh_mode if isinstance(refresh_mode, str) else None,
+    }
+
+
+def _latest_connections(device_ids: list[str]) -> dict[str, dict]:
+    if not device_ids:
+        return {}
+    placeholders = ",".join("?" for _ in device_ids)
+    with _db() as con:
+        rows = con.execute(
+            f"SELECT device_id,reported_at,payload_json FROM device_telemetry "
+            f"WHERE device_id IN ({placeholders}) ORDER BY reported_at DESC",
+            device_ids,
+        ).fetchall()
+    latest: dict[str, sqlite3.Row] = {}
+    for row in rows:
+        latest.setdefault(row["device_id"], row)
+    now = dt.datetime.now(dt.timezone.utc)
+    return {device_id: _connection_state(latest.get(device_id), now) for device_id in device_ids}
+
+
 def list_devices(user_id: str, *, include_hidden: bool = True) -> list[dict]:
     sql = "SELECT * FROM devices WHERE user_id=?" + ("" if include_hidden else " AND hidden=0") + " ORDER BY name"
     with _db() as con:
-        return [_public_device(row) for row in con.execute(sql, (user_id,))]
+        rows = con.execute(sql, (user_id,)).fetchall()
+    connections = _latest_connections([row["id"] for row in rows])
+    return [{**_public_device(row), "connection": connections.get(row["id"], _connection_state(None))} for row in rows]
 
 
 def get_device(user_id: str, device_id: str) -> dict | None:
@@ -467,15 +512,9 @@ def _attendance_status(user_id: str, day: dt.date) -> str:
     return "off_work" if row["clock_in"] and row["clock_out"] else "working" if row["clock_in"] else "pending"
 
 
-def device_layout(device: dict, now: dt.datetime | None = None) -> dict:
-    """為 token 所屬 Pi 建立版面，不透露他人裝置與素材。"""
+def _page_layout(device: dict, page: dict | None, now: dt.datetime, *, scene: str | None = None) -> dict:
+    """將指定頁面轉為裝置可渲染資料；共用於 Pi layout 與管理端預覽。"""
     from .modules.registry import get_module
-    now = now or config.now_local()
-    holiday = now.date().isoformat() in set(store.get_holidays())
-    status = _attendance_status(device["user_id"], now.date())
-    rules = [r for r in list_rules(device["user_id"]) if r["device_id"] == device["id"]]
-    chosen = max((r for r in rules if _match_rule(r, now, holiday, status)), key=lambda r: r["priority"], default=None)
-    page = get_page(device["user_id"], chosen["page_id"]) if chosen else None
     elements = []
     for item in (page or {"content": {"elements": []}})["content"].get("elements", []):
         module = get_module(item.get("module_id")) if isinstance(item, dict) else None
@@ -489,8 +528,27 @@ def device_layout(device: dict, now: dt.datetime | None = None) -> dict:
             except Exception: data = {}
         elements.append({**item, "data": data})
     return {"device_id": device["id"], "profile": device["profile"], "layout_id": page["id"] if page else None,
-            "page_name": page["name"] if page else None, "scene": chosen["name"] if chosen else None,
+            "page_name": page["name"] if page else None, "scene": scene,
             "elements": elements, "resolved_at": now.isoformat(timespec="seconds")}
+
+
+def device_layout(device: dict, now: dt.datetime | None = None) -> dict:
+    """為 token 所屬 Pi 建立版面，不透露他人裝置與素材。"""
+    now = now or config.now_local()
+    holiday = now.date().isoformat() in set(store.get_holidays())
+    status = _attendance_status(device["user_id"], now.date())
+    rules = [r for r in list_rules(device["user_id"]) if r["device_id"] == device["id"]]
+    chosen = max((r for r in rules if _match_rule(r, now, holiday, status)), key=lambda r: r["priority"], default=None)
+    page = get_page(device["user_id"], chosen["page_id"]) if chosen else None
+    return _page_layout(device, page, now, scene=chosen["name"] if chosen else None)
+
+
+def preview_layout(user_id: str, device_id: str, page_id: str, now: dt.datetime | None = None) -> dict | None:
+    """管理者預覽指定頁面；所有 device/page 查詢都限制在同一 owner 範圍。"""
+    device, page = get_device(user_id, device_id), get_page(user_id, page_id)
+    if not device or not page:
+        return None
+    return _page_layout(device, page, now or config.now_local(), scene="預覽")
 
 
 def asset_for_device(device: dict, asset_id: str) -> dict | None:
@@ -501,8 +559,30 @@ def save_telemetry(device: dict, payload: Any) -> dict:
     if not isinstance(payload, dict): raise ValueError("telemetry 必須是 JSON 物件")
     allowed = {"agent_version", "battery_percent", "uptime_seconds", "refresh_mode", "status", "reported_at"}
     if set(payload) - allowed: raise ValueError("telemetry 包含不支援欄位")
-    clean = {key: payload[key] for key in allowed if key in payload}
-    clean["reported_at"] = clean.get("reported_at") or dt.datetime.now(dt.timezone.utc).isoformat()
+    clean: dict[str, Any] = {}
+    if "agent_version" in payload:
+        if not isinstance(payload["agent_version"], str) or len(payload["agent_version"]) > 64:
+            raise ValueError("agent_version 格式不正確")
+        clean["agent_version"] = payload["agent_version"]
+    if "status" in payload:
+        if payload["status"] not in {"online", "offline"}:
+            raise ValueError("status 格式不正確")
+        clean["status"] = payload["status"]
+    if "refresh_mode" in payload:
+        if payload["refresh_mode"] not in {"none", "partial", "full"}:
+            raise ValueError("refresh_mode 格式不正確")
+        clean["refresh_mode"] = payload["refresh_mode"]
+    for key in ("battery_percent", "uptime_seconds"):
+        if key not in payload:
+            continue
+        value = payload[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+            raise ValueError(f"{key} 格式不正確")
+        if key == "battery_percent" and value > 100:
+            raise ValueError("battery_percent 格式不正確")
+        clean[key] = value
+    # Pi 時鐘不一定準；連線判定只信任 Server 收到已驗證請求的時間。
+    clean["reported_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
     with _db() as con:
         con.execute("INSERT INTO device_telemetry(device_id,reported_at,payload_json) VALUES(?,?,?)", (device["id"], clean["reported_at"], _json(clean)))
     return clean

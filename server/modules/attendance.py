@@ -10,6 +10,7 @@ from .drawing import load_font
 
 class AttendanceModule(BaseModule):
     module_id = "attendance"
+    category = "status"
     display_name = "上下班打卡／請假"
     description = "顯示雲端儲存的今日上班、下班與請假狀態；可在編輯器右側直接更新。"
     default_size = (340, 180)

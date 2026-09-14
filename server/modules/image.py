@@ -22,6 +22,7 @@ from .drawing import load_font
 
 class ImageModule(BaseModule):
     module_id = "image"
+    category = "visual"
     display_name = "圖片"
     description = "顯示素材庫裡的一張圖片（先在編輯器的「圖片素材庫」面板上傳）。"
     default_size = (160, 160)

@@ -9,6 +9,7 @@ from .drawing import load_font
 
 class StatusNoticeModule(BaseModule):
     module_id = "status_notice"
+    category = "status"
     display_name = "全頁狀態訊息"
     description = "以大字顯示靜態提示；適合下班、週末或請假頁，不會自行刷新。"
     default_size = (800, 480)

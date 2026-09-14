@@ -24,6 +24,7 @@ from .drawing import load_font
 
 class StatPairModule(BaseModule):
     module_id = "stat_pair"
+    category = "data"
     display_name = "標籤/數值列表"
     description = "標題 + 一組 label/value 列，數值可手動填或用網路請求取得。"
     default_size = (260, 160)

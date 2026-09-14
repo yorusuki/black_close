@@ -30,6 +30,7 @@ _DEFAULT_FRAMES = [
 
 class MascotModule(BaseModule):
     module_id = "mascot"
+    category = "visual"
     display_name = "AA 表情吉祥物"
     description = "在多組「表情 + 台詞」之間輪播，可做成動畫（實際刷新頻率受裝置局部刷新能力限制）。"
     default_size = (800, 60)

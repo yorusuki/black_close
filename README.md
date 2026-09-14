@@ -40,6 +40,8 @@ epagerPi_build/     舊版重複快照；僅供比對，禁止當成部署來源
 
 - 要架設網頁管理端：從 [Server 建置與部署](docs/DEPLOY_SERVER.md) 開始。
 - 要接實體電子紙與 UPS：從 [Pi 建置與部署](docs/DEPLOY_PI.md) 開始。
+- 要逐項確認 `.env` 與 Pi 設定：閱讀[設定參數總覽](docs/CONFIGURATION.md)。
+- 要使用登入後的管理台：閱讀[管理台操作說明](docs/MANAGEMENT_UI.md)。
 - 要理解資料流與模組架構：閱讀 [架構文件](docs/ARCHITECTURE.md)。
 
 ## 已知限制

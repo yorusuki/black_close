@@ -5,38 +5,50 @@
   <title>epagerPi 管理台</title><link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header class="topbar"><h1>epagerPi 管理台</h1><span id="identity"></span><button id="logout">登出</button></header>
-<main class="workspace">
-  <section class="card">
-    <h2>Pi 設定</h2>
-    <form id="device-form" class="form-row"><input id="device-name" required maxlength="100" placeholder="Pi 名稱">
-      <select id="device-model"><option value="waveshare_4in26">Waveshare 4.26 吋</option><option value="inky_phat">Pimoroni Inky pHAT</option><option value="mock">Mock</option></select>
-      <button>新增 Pi 並配發 token</button></form>
-    <p class="hint">Token 僅會在建立或重配發時顯示一次；隱藏的 Pi 無法讀取版面。</p><div id="device-list"></div>
-  </section>
-
-  <section class="card">
-    <h2>頁面建立器</h2>
-    <div class="form-row"><input id="new-page-name" maxlength="100" placeholder="新頁面名稱"><button id="new-page">新增頁面</button>
-      <select id="page-select"></select><button id="save-page">儲存頁面</button></div>
-    <div class="builder"><div><h3>元件</h3><select id="module-select"></select><button id="add-module">加入元件</button><div id="element-list"></div></div>
-      <form id="element-form" hidden><h3>元件屬性</h3><div class="grid-fields">
-        <label>x<input id="el-x" type="number" min="0"></label><label>y<input id="el-y" type="number" min="0"></label>
-        <label>寬<input id="el-w" type="number" min="1"></label><label>高<input id="el-h" type="number" min="1"></label>
-        <label>層級<input id="el-z" type="number"></label><label>刷新秒數<input id="el-refresh" type="number" min="1"></label></div>
-        <div id="config-fields"></div><button>套用元件</button><button id="remove-element" type="button" class="danger">刪除元件</button></form></div>
-    <p class="hint">頁面、元件與模組設定皆以欄位操作，管理畫面不提供 JSON 編輯。</p>
-  </section>
-
-  <section class="card"><h2>規則建立器</h2>
-    <form id="rule-form" class="grid-fields"><label>規則名稱<input id="rule-name" required maxlength="100"></label><label>Pi<select id="rule-device"></select></label>
-      <label>頁面<select id="rule-page"></select></label><label>優先序<input id="rule-priority" type="number" value="0"></label>
-      <label>開始時間<input id="rule-start" type="time"></label><label>結束時間<input id="rule-end" type="time"></label>
-      <label>出勤狀態<select id="rule-attendance"><option value="">不限</option><option value="pending">未打卡</option><option value="working">上班中</option><option value="off_work">已下班</option><option value="leave">請假</option></select></label>
-      <label>假日<select id="rule-holiday"><option value="">不限</option><option value="true">是</option><option value="false">否</option></select></label>
-      <fieldset id="weekdays"><legend>星期</legend><label><input type="checkbox" value="0">一</label><label><input type="checkbox" value="1">二</label><label><input type="checkbox" value="2">三</label><label><input type="checkbox" value="3">四</label><label><input type="checkbox" value="4">五</label><label><input type="checkbox" value="5">六</label><label><input type="checkbox" value="6">日</label></fieldset><button>新增規則</button></form><div id="rule-list"></div>
-  </section>
-
-  <section class="card"><h2>素材與出勤</h2><form id="asset-form"><input id="asset-file" type="file" accept="image/png,image/jpeg,image/gif,image/bmp,image/webp" required><button>上傳圖片</button></form><div id="asset-list"></div>
-    <form id="attendance-form" class="form-row"><label>上班<input id="clock-in" type="time"></label><label>下班<input id="clock-out" type="time"></label><label><input id="on-leave" type="checkbox"> 請假</label><input id="leave-note" maxlength="80" placeholder="請假說明"><button>儲存出勤</button></form><p id="attendance-status" class="hint"></p></section>
-</main><script src="editor.js"></script></body></html>
+  <header class="topbar">
+    <a class="brand" href="#overview" aria-label="epagerPi 總覽"><span class="brand-mark">e</span><span>epagerPi</span></a>
+    <nav class="tabs" aria-label="管理功能">
+      <button class="tab" data-tab="overview" type="button">總覽</button>
+      <button class="tab" data-tab="devices" type="button">設備</button>
+      <button class="tab" data-tab="layouts" type="button">版面編輯</button>
+      <button class="tab" data-tab="rules" type="button">顯示規則</button>
+      <button class="tab" data-tab="content" type="button">內容與出勤</button>
+    </nav>
+    <div class="account"><span id="identity"></span><button id="refresh-data" class="button button-quiet" type="button">重新整理</button><button id="logout" class="button button-quiet" type="button">登出</button></div>
+  </header>
+  <main class="app-shell">
+    <section id="overview" class="tab-panel" data-panel="overview">
+      <div class="page-heading"><div><p class="eyebrow">WORKSPACE</p><h1>管理總覽</h1><p>裝置的連線狀態來自最後一次成功的 Pi API 回報，不會額外進行高頻輪詢。</p></div></div>
+      <div id="summary-cards" class="summary-grid"></div>
+      <section class="surface"><div class="section-heading"><div><h2>設備狀態</h2><p>查看最後成功連線時間與目前可用狀態。</p></div><button class="button button-secondary" data-open-tab="devices" type="button">管理設備</button></div><div id="overview-devices" class="device-grid"></div></section>
+    </section>
+    <section id="devices" class="tab-panel" data-panel="devices" hidden>
+      <div class="page-heading"><div><p class="eyebrow">DEVICES</p><h1>設備管理</h1><p>建立 Pi、取得一次性 token，並確認裝置是否曾成功向 Server 請求版面。</p></div></div>
+      <section class="surface"><div class="section-heading"><div><h2>新增設備</h2><p>建立後會顯示一次 token，請立即填入該台 Pi 的設定檔。</p></div></div><form id="device-form" class="inline-form"><label>Pi 名稱<input id="device-name" required maxlength="100" placeholder="例如：玄關電子紙"></label><label>面板型號<select id="device-model"><option value="waveshare_4in26">Waveshare 4.26 吋</option><option value="inky_phat">Pimoroni Inky pHAT</option><option value="mock">Mock 預覽裝置</option></select></label><button class="button button-primary">新增設備並配發 token</button></form></section>
+      <section class="surface"><div class="section-heading"><div><h2>已建立設備</h2><p>「已連線」代表最近 3 分鐘內收到該 Pi 已驗證的回報；不會額外喚醒 Pi。</p></div></div><div id="device-list" class="device-grid"></div></section>
+    </section>
+    <section id="layouts" class="tab-panel" data-panel="layouts" hidden>
+      <div class="page-heading"><div><p class="eyebrow">LAYOUTS</p><h1>版面編輯</h1><p>拖曳元件自由編排；位置與尺寸使用面板實際像素儲存，Pi 的版面傳輸格式不變。</p></div></div>
+      <section class="surface page-toolbar"><div class="field-grow"><label>目前頁面<select id="page-select"></select></label></div><label>頁面名稱<input id="page-name" maxlength="100" placeholder="頁面名稱"></label><button id="save-page" class="button button-primary" type="button">儲存版面</button><div class="toolbar-divider"></div><label>新增頁面<input id="new-page-name" maxlength="100" placeholder="新頁面名稱"></label><button id="new-page" class="button button-secondary" type="button">建立頁面</button></section>
+      <div class="layout-workbench">
+        <aside class="surface module-panel"><div class="section-heading compact"><div><h2>功能模組</h2><p>依用途分類；新增模組會自動出現在此處。</p></div></div><div id="module-palette"></div></aside>
+        <section class="surface canvas-panel"><div class="section-heading compact"><div><h2>畫布</h2><p>拖曳移動；右下角控制點可縮放；以 8px 吸附。</p></div><label class="canvas-target">以此設備尺寸編輯<select id="canvas-device"></select></label></div><div class="canvas-scroll"><div id="layout-canvas" class="layout-canvas" aria-label="可視化版面畫布"></div></div><p id="canvas-meta" class="hint"></p></section>
+        <aside class="surface inspector-panel"><div class="section-heading compact"><div><h2>元件設定</h2><p>選取畫布中的元件後調整細節。</p></div></div><div id="element-empty" class="empty-state">從左側選擇模組，或點選畫布元件。</div><form id="element-form" hidden><p id="selected-module-name" class="selected-module"></p><div class="property-group"><h3>位置與尺寸</h3><div class="field-grid"><label>X<input id="el-x" type="number" min="0"></label><label>Y<input id="el-y" type="number" min="0"></label><label>寬<input id="el-w" type="number" min="1"></label><label>高<input id="el-h" type="number" min="1"></label><label>層級<input id="el-z" type="number"></label><label>資料更新秒數<input id="el-refresh" type="number" min="1"></label></div></div><div class="property-group"><h3>模組內容</h3><div id="config-fields" class="field-grid"></div></div><div class="button-row"><button class="button button-primary">套用設定</button><button id="remove-element" type="button" class="button button-danger">刪除元件</button></div></form></aside>
+      </div>
+      <section class="surface preview-panel"><div class="section-heading"><div><h2>實際渲染預覽</h2><p>使用 Server 的真實模組與目標設備色彩模式合成；請先儲存版面再更新預覽。</p></div><div class="preview-actions"><label>預覽設備<select id="preview-device"></select></label><button id="refresh-preview" class="button button-secondary" type="button">更新預覽</button></div></div><div id="preview-empty" class="empty-state">建立設備與頁面後，即可查看預覽。</div><img id="layout-preview" class="layout-preview" alt="版面實際渲染預覽" hidden></section>
+    </section>
+    <section id="rules" class="tab-panel" data-panel="rules" hidden>
+      <div class="page-heading"><div><p class="eyebrow">RULES</p><h1>顯示規則</h1><p>依時間、星期、假日與出勤狀態，決定每台 Pi 顯示哪個頁面。</p></div></div>
+      <section class="surface"><div class="section-heading"><div><h2>新增規則</h2><p>數字較高的優先序優先套用。</p></div></div><form id="rule-form" class="field-grid rule-form"><label>規則名稱<input id="rule-name" required maxlength="100" placeholder="例如：平日工作頁"></label><label>Pi<select id="rule-device"></select></label><label>頁面<select id="rule-page"></select></label><label>優先序<input id="rule-priority" type="number" value="0"></label><label>開始時間<input id="rule-start" type="time"></label><label>結束時間<input id="rule-end" type="time"></label><label>出勤狀態<select id="rule-attendance"><option value="">不限</option><option value="pending">未打卡</option><option value="working">上班中</option><option value="off_work">已下班</option><option value="leave">請假</option></select></label><label>假日<select id="rule-holiday"><option value="">不限</option><option value="true">是</option><option value="false">否</option></select></label><fieldset id="weekdays"><legend>星期（不勾選＝每天）</legend><label><input type="checkbox" value="0">一</label><label><input type="checkbox" value="1">二</label><label><input type="checkbox" value="2">三</label><label><input type="checkbox" value="3">四</label><label><input type="checkbox" value="4">五</label><label><input type="checkbox" value="5">六</label><label><input type="checkbox" value="6">日</label></fieldset><button class="button button-primary">新增規則</button></form></section>
+      <section class="surface"><div class="section-heading"><div><h2>現有規則</h2></div></div><div id="rule-list" class="list-stack"></div></section>
+    </section>
+    <section id="content" class="tab-panel" data-panel="content" hidden>
+      <div class="page-heading"><div><p class="eyebrow">CONTENT</p><h1>內容與出勤</h1><p>管理頁面圖片素材與今日出勤資料。</p></div></div>
+      <div class="two-column"><section class="surface"><div class="section-heading"><div><h2>圖片素材</h2><p>上傳後可由圖片模組選用。</p></div></div><form id="asset-form" class="inline-form"><label class="field-grow">圖片檔案<input id="asset-file" type="file" accept="image/png,image/jpeg,image/gif,image/bmp,image/webp" required></label><button class="button button-primary">上傳圖片</button></form><div id="asset-list" class="asset-grid"></div></section><section class="surface"><div class="section-heading"><div><h2>今日出勤</h2><p>手動調整僅影響目前帳號的今日狀態。</p></div></div><form id="attendance-form" class="field-grid"><label>上班<input id="clock-in" type="time"></label><label>下班<input id="clock-out" type="time"></label><label class="checkbox-field"><input id="on-leave" type="checkbox"> 今日請假</label><label class="field-span"><span>請假說明</span><input id="leave-note" maxlength="80" placeholder="選填，最多 80 字"></label><button class="button button-primary">儲存出勤</button></form><p id="attendance-status" class="hint"></p></section></div>
+    </section>
+  </main>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <dialog id="token-dialog" class="token-dialog"><form method="dialog"><div class="dialog-heading"><h2>Pi device token</h2><button class="icon-button" aria-label="關閉" value="close">×</button></div><p>此 token 只顯示這一次。請複製到對應 Pi 的 <code>device_agent/config.yaml</code>，不要提交或分享。</p><code id="token-value" class="token-value"></code><div class="button-row"><button id="copy-token" class="button button-primary" type="button">複製 token</button><button class="button button-secondary" value="close">我已安全保存</button></div></form></dialog>
+  <script src="editor.js"></script>
+</body>
+</html>
