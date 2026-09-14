@@ -33,7 +33,7 @@ from PIL import Image, ImageDraw
 
 from .base import BaseModule
 from .datasource import is_network_source, resolve_value
-from .drawing import draw_block_bar, load_font
+from .drawing import draw_block_bar, load_font, scaled_font_size
 
 
 def _resolve_for_render(source: dict | None, network_value, default=None):
@@ -60,6 +60,9 @@ class ProgressBarModule(BaseModule):
         {"key": "max", "label": "最大值", "type": "number", "default": 100},
         {"key": "unit", "label": "單位", "type": "text", "default": "%"},
         {"key": "footer_lines", "label": "附註文字列", "type": "json", "editor": "footer_lines", "default": []},
+        {"key": "title_scale", "label": "標題字體大小（%）", "type": "number", "default": 100, "min": 60, "max": 200},
+        {"key": "value_scale", "label": "進度數值字體大小（%）", "type": "number", "default": 100, "min": 60, "max": 200},
+        {"key": "footer_scale", "label": "附註字體大小（%）", "type": "number", "default": 100, "min": 60, "max": 200},
     ]
 
     def fetch_data(self, cfg):
@@ -94,13 +97,13 @@ class ProgressBarModule(BaseModule):
 
         pad = 8
         y = pad
-        title_font = load_font(int(h * 0.13))
+        title_font = load_font(scaled_font_size(h * 0.13, cfg.get("title_scale", 100), minimum=11))
         draw.text((pad, y), title, fill="black", font=title_font)
         y += int(h * 0.20)
 
         bar_h = int(h * 0.16)
         draw_block_bar(draw, (pad, y), (w - pad * 2, bar_h), ratio, fg="black", bg="white")
-        value_font = load_font(int(h * 0.13))
+        value_font = load_font(scaled_font_size(h * 0.13, cfg.get("value_scale", 100), minimum=11))
         try:
             value_text = f"{float(value):g}{unit}"
         except (TypeError, ValueError):
@@ -115,7 +118,7 @@ class ProgressBarModule(BaseModule):
             fv = _resolve_for_render(line.get("value_source"), network_val, None) if "value_source" in line else None
             text = str(fv) if fv is not None else line.get("text", "")
             size_ratio = 0.22 if line.get("big") else 0.11
-            f = load_font(int(h * size_ratio))
+            f = load_font(scaled_font_size(h * size_ratio, cfg.get("footer_scale", 100), minimum=10))
             bbox = draw.textbbox((0, 0), text, font=f)
             tw = bbox[2] - bbox[0]
             x = (w - tw) / 2 if line.get("center", True) else pad

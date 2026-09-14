@@ -8,7 +8,7 @@
   - 裝置若不支援局部刷新：套用「最短整幅刷新間隔」節流，避免像動畫這種高頻變動
     去頻繁觸發整幅刷新（電子紙整幅刷新較傷面板、也比較慢）。
   - 裝置若支援局部刷新：一般變動局刷；首次輸出、版面切換與模組明確指定時整幅刷新，
-    並在可設定的時間窗口（微雪預設 20 分鐘）後的下一次畫面變動整幅刷新，避免殘影累積。
+    並在可設定的間隔（微雪預設 5 小時）或每日指定時間全刷，避免殘影累積。
 
 這個模組拆成兩段（對應 docs/IMPLEMENTATION_NOTES.md「拆分模式改成樹莓派本機渲染」）：
 
@@ -45,6 +45,7 @@ from . import device_profiles, scenes
 _fetch_cache: dict[tuple, dict] = {}
 _last_element_state: dict[tuple, tuple] = {}
 _last_full_refresh: dict[str, float] = {}
+_last_scheduled_full_day: dict[str, datetime.date] = {}
 _partial_count_since_full: dict[str, int] = {}
 _last_layout_signature: dict[str, str] = {}
 
@@ -134,7 +135,31 @@ def _decide_refresh_mode(
     *,
     layout_changed: bool,
 ):
+    canvas_box = [[0, 0, int(profile["resolution"][0]), int(profile["resolution"][1])]]
+    # 每日排程要在斷網、靜態頁面也能成立：Pi 本機 tick 會持續呼叫這裡，
+    # 不依賴 Server 再送新的 layout。設定由 Server profile 下發，未來只改 Server。
+    daily_at = profile.get("full_refresh_daily_at")
+    if profile.get("partial_refresh", False) and isinstance(daily_at, str) and len(daily_at) == 5:
+        try:
+            scheduled_time = datetime.time.fromisoformat(daily_at)
+        except ValueError:
+            scheduled_time = None
+        if scheduled_time and now.time() >= scheduled_time and _last_scheduled_full_day.get(device_id) != now.date():
+            _last_scheduled_full_day[device_id] = now.date()
+            _partial_count_since_full[device_id] = 0
+            _last_full_refresh[device_id] = now.timestamp()
+            return "full", canvas_box
+
+    # 即使畫面內容沒有變化，也在設定的保護週期做一次全刷。這讓離線的靜態頁
+    # 不會永久缺少全刷；一般時間仍只有 dirty 元件才局刷。
     if not dirty_boxes:
+        if profile.get("partial_refresh", False):
+            full_interval = max(600, min(86_400, int(profile.get("full_refresh_interval_seconds", 1200))))
+            last_full = _last_full_refresh.get(device_id)
+            if last_full is not None and now.timestamp() - last_full >= full_interval:
+                _partial_count_since_full[device_id] = 0
+                _last_full_refresh[device_id] = now.timestamp()
+                return "full", canvas_box
         return "none", []
 
     # 第一次輸出、切換場景／layout、或有模組明確要求時，一律整幅刷新。這可避免
@@ -153,8 +178,8 @@ def _decide_refresh_mode(
         return "full", dirty_boxes
 
     # 不再以「局刷 N 次」強制全刷；改為固定時間窗口。局刷次數仍保留在 meta，方便
-    # 實機測試殘影是否與次數相關。靜態頁沒有 dirty 畫面就不會因此被喚醒刷新。
-    full_interval = max(600, int(profile.get("full_refresh_interval_seconds", 1200)))
+    # 實機測試殘影是否與次數相關。靜態頁的到期情形在上方提前處理。
+    full_interval = max(600, min(86_400, int(profile.get("full_refresh_interval_seconds", 1200))))
     last_full = _last_full_refresh.get(device_id)
     if last_full is None or now.timestamp() - last_full >= full_interval:
         _partial_count_since_full[device_id] = 0

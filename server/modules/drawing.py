@@ -44,6 +44,16 @@ def load_font(size: int) -> ImageFont.FreeTypeFont:
     return ImageFont.load_default()
 
 
+def scaled_font_size(base_size: int | float, percent, minimum: int = 1, maximum: int = 512) -> int:
+    """將版面可設定的字體比例限制在安全範圍，避免不可信 config 造成例外或極大影像。"""
+    try:
+        scale = float(percent)
+    except (TypeError, ValueError):
+        scale = 100.0
+    scale = max(60.0, min(200.0, scale))
+    return max(minimum, min(maximum, round(float(base_size) * scale / 100.0)))
+
+
 def draw_block_bar(draw: ImageDraw.ImageDraw, xy, wh, ratio: float, fg, bg) -> None:
     """畫一條用方塊字元風格呈現的水平進度條（實心矩形＋外框，視覺上對應 mockup 的 █░ 風格）。"""
     x, y = xy

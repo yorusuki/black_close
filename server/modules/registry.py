@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from .attendance import AttendanceModule
 from .clock_bar import ClockBarModule
+from .clock_in_badge import ClockInBadgeModule
 from .image import ImageModule
 from .mascot import MascotModule
 from .progress_bar import ProgressBarModule
@@ -17,6 +18,7 @@ from .status_notice import StatusNoticeModule
 
 _MODULE_CLASSES = [
     ClockBarModule,
+    ClockInBadgeModule,
     ProgressBarModule,
     StatPairModule,
     AttendanceModule,

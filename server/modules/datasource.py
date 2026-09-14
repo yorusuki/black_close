@@ -20,7 +20,7 @@ _TIMEOUT_DEFAULT = 5
 
 
 def _today_time(hhmm: str) -> datetime.datetime:
-    now = datetime.datetime.now()
+    now = config.now_local()
     return datetime.datetime.combine(now.date(), datetime.time.fromisoformat(hhmm))
 
 
@@ -57,7 +57,7 @@ def resolve_value(source: dict | None, default=None):
 
     if stype == "time_until":
         # 回傳「現在到某個今天的時間點」還剩多少，格式 HH:MM；已過該時間回傳 00:00。
-        now = datetime.datetime.now()
+        now = config.now_local()
         target = _today_time(source["target"])
         remaining = target - now
         if remaining.total_seconds() <= 0:
@@ -67,7 +67,7 @@ def resolve_value(source: dict | None, default=None):
 
     if stype == "time_progress":
         # 回傳「現在」在 start~end 這段今天的時間區間中的進度百分比（0-100，會夾在範圍內）。
-        now = datetime.datetime.now()
+        now = config.now_local()
         start = _today_time(source["start"])
         end = _today_time(source["end"])
         if end <= start:

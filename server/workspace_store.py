@@ -17,6 +17,8 @@ from . import config, store
 MODEL_IDS = {"inky_phat", "waveshare_4in26", "mock"}
 _PLACEHOLDER_USER_ID = "legacy-unassigned"
 _MIGRATION_KEY = "legacy_json_v1"
+_WORK_LAYOUT_UPGRADE_KEY = "waveshare_work_layout_v2"
+_REFRESH_POLICY_UPGRADE_KEY = "waveshare_refresh_policy_v2"
 _ONLINE_AFTER_SECONDS = 180
 
 
@@ -207,6 +209,43 @@ def migrate_legacy_json() -> dict[str, int]:
         return summary
 
 
+def upgrade_default_work_layout() -> bool:
+    """一次性更新已遷移的 4.26 吋預設工作頁，不觸碰任何自訂頁面或規則。"""
+    from .default_layouts import waveshare_work_layout
+
+    with _db() as con:
+        done = con.execute("SELECT 1 FROM schema_metadata WHERE key=?", (_WORK_LAYOUT_UPGRADE_KEY,)).fetchone()
+        if done:
+            return False
+        con.execute(
+            "UPDATE pages SET content_json=? WHERE legacy_id='waveshare426-01_dashboard'",
+            (_json(waveshare_work_layout()),),
+        )
+        con.execute("INSERT INTO schema_metadata(key,value) VALUES(?,?)", (_WORK_LAYOUT_UPGRADE_KEY, "1"))
+        return True
+
+
+def upgrade_default_refresh_policy() -> int:
+    """將尚未自訂、仍為舊 20 分鐘預設的局刷面板改為 5 小時全刷保護週期。"""
+    with _db() as con:
+        done = con.execute("SELECT 1 FROM schema_metadata WHERE key=?", (_REFRESH_POLICY_UPGRADE_KEY,)).fetchone()
+        if done:
+            return 0
+        rows = con.execute("SELECT id,profile_json FROM devices").fetchall()
+        updated = 0
+        for row in rows:
+            profile = _parse_json(row["profile_json"], {})
+            if not isinstance(profile, dict) or not profile.get("partial_refresh"):
+                continue
+            if profile.get("full_refresh_interval_seconds", 1200) != 1200:
+                continue
+            profile["full_refresh_interval_seconds"] = 18_000
+            con.execute("UPDATE devices SET profile_json=? WHERE id=?", (_json(profile), row["id"]))
+            updated += 1
+        con.execute("INSERT INTO schema_metadata(key,value) VALUES(?,?)", (_REFRESH_POLICY_UPGRADE_KEY, str(updated)))
+        return updated
+
+
 def user_by_id(user_id: str) -> dict | None:
     with _db() as con:
         return _row(con.execute("SELECT * FROM users WHERE id=? AND is_placeholder=0", (user_id,)).fetchone())
@@ -215,6 +254,19 @@ def user_by_id(user_id: str) -> dict | None:
 def user(line_sub: str) -> dict | None:
     with _db() as con:
         return _row(con.execute("SELECT * FROM users WHERE line_sub=? AND is_placeholder=0", (line_sub,)).fetchone())
+
+
+def sync_owner() -> dict | None:
+    """回傳 EIP 排程可安全寫入的唯一 owner。
+
+    EIP 登入帳號是單一個人帳號；若未完成首次登入，或未來帳號模型有多位 owner，
+    排程必須停止而不是猜測要覆寫誰的出勤資料。
+    """
+    with _db() as con:
+        rows = con.execute(
+            "SELECT * FROM users WHERE role='owner' AND is_placeholder=0 ORDER BY created_at, id"
+        ).fetchall()
+    return _row(rows[0]) if len(rows) == 1 else None
 
 
 def ensure_first_owner(line_sub: str, display_name: str) -> dict | None:
@@ -307,8 +359,8 @@ def create_device(user_id: str, name: str, model_id: str, profile: dict | None =
         raise ValueError("不支援的硬體型號")
     profiles = {
         "inky_phat": {"driver": "inky_phat", "resolution": [212, 104], "color_mode": "3color", "partial_refresh": False},
-        "waveshare_4in26": {"driver": "waveshare_4in26", "resolution": [800, 480], "color_mode": "1bit", "partial_refresh": True},
-        "mock": {"driver": "mock", "resolution": [800, 480], "color_mode": "1bit", "partial_refresh": True},
+        "waveshare_4in26": {"driver": "waveshare_4in26", "resolution": [800, 480], "color_mode": "1bit", "partial_refresh": True, "full_refresh_interval_seconds": 18_000},
+        "mock": {"driver": "mock", "resolution": [800, 480], "color_mode": "1bit", "partial_refresh": True, "full_refresh_interval_seconds": 18_000},
     }
     token, token_hash, identifier = *issue_device_token(), str(uuid.uuid4())
     with _db() as con:
@@ -323,6 +375,51 @@ def create_device(user_id: str, name: str, model_id: str, profile: dict | None =
 def set_device_hidden(user_id: str, device_id: str, hidden: bool) -> bool:
     with _db() as con:
         return con.execute("UPDATE devices SET hidden=? WHERE id=? AND user_id=?", (int(hidden), device_id, user_id)).rowcount == 1
+
+
+def update_device_refresh(user_id: str, device_id: str, refresh: Any) -> dict | None:
+    """更新可局刷面板的全刷策略；設定存在 Server 的 profile_json，Pi 只接收結果。"""
+    device = get_device(user_id, device_id)
+    if not device:
+        return None
+    if not device["profile"].get("partial_refresh"):
+        raise ValueError("此面板不支援局部刷新，無法設定局刷／全刷週期")
+    if not isinstance(refresh, dict) or set(refresh) - {"mode", "interval_seconds", "daily_at"}:
+        raise ValueError("刷新設定格式不正確")
+
+    mode = refresh.get("mode")
+    profile = dict(device["profile"])
+    if mode == "interval":
+        seconds = refresh.get("interval_seconds")
+        if isinstance(seconds, bool) or not isinstance(seconds, int) or not 600 <= seconds <= 86_400:
+            raise ValueError("全刷間隔必須介於 10 分鐘至 24 小時")
+        profile["full_refresh_interval_seconds"] = seconds
+        profile.pop("server_full_refresh_daily_at", None)
+        # Pi 端離線本機排程用的欄位也要一併移除，避免切回間隔模式後仍在
+        # 每日舊時間額外全刷。
+        profile.pop("full_refresh_daily_at", None)
+    elif mode == "daily":
+        daily_at = refresh.get("daily_at")
+        if not isinstance(daily_at, str) or len(daily_at) != 5:
+            raise ValueError("每日全刷時間必須為 HH:MM")
+        try:
+            dt.time.fromisoformat(daily_at)
+        except ValueError as exc:
+            raise ValueError("每日全刷時間必須為 HH:MM") from exc
+        # 若 Server 指定的日更標記漏掉，24 小時是最後一道避免殘影長期累積的保護。
+        profile["full_refresh_interval_seconds"] = 86_400
+        profile["server_full_refresh_daily_at"] = daily_at
+        # 新版 Pi 在沒有 API／網路時仍會保有上次取得的 profile；使用這個欄位
+        # 直接在本機 tick 觸發每日全刷。server_* 欄位則保留給未升級 Pi 的
+        # layout signature 相容機制。
+        profile["full_refresh_daily_at"] = daily_at
+    else:
+        raise ValueError("刷新模式必須是 interval 或 daily")
+
+    with _db() as con:
+        con.execute("UPDATE devices SET profile_json=? WHERE id=? AND user_id=?", (_json(profile), device_id, user_id))
+        row = con.execute("SELECT * FROM devices WHERE id=? AND user_id=?", (device_id, user_id)).fetchone()
+    return _public_device(row) if row else None
 
 
 def rotate_device_token(user_id: str, device_id: str) -> str | None:
@@ -347,7 +444,41 @@ def device_for_token(token: str) -> dict | None:
 def _public_page(row: sqlite3.Row) -> dict:
     out = dict(row)
     out["content"] = _parse_json(out.pop("content_json"), {"elements": []})
+    out["model_id"] = _page_model_id(out)
     return out
+
+
+def _page_model_id(page: dict) -> str | None:
+    """取得頁面所屬面板型號；舊資料則以已知 layout ID／畫布尺寸安全推斷。"""
+    template_id = str(page.get("template_id") or "")
+    if template_id.startswith("model:"):
+        model_id = template_id.removeprefix("model:")
+        return model_id if model_id in MODEL_IDS else None
+
+    legacy_id = str(page.get("legacy_id") or "")
+    if legacy_id.startswith("phat-01_"):
+        return "inky_phat"
+    if legacy_id.startswith("waveshare426-01_"):
+        return "waveshare_4in26"
+
+    elements = (page.get("content") or {}).get("elements", [])
+    if not isinstance(elements, list) or not elements:
+        return None
+    try:
+        right = max(int(item.get("x", 0)) + int(item.get("w", 0)) for item in elements if isinstance(item, dict))
+        bottom = max(int(item.get("y", 0)) + int(item.get("h", 0)) for item in elements if isinstance(item, dict))
+    except (TypeError, ValueError):
+        return None
+    if right <= 212 and bottom <= 104:
+        return "inky_phat"
+    if right <= 800 and bottom <= 480:
+        return "waveshare_4in26"
+    return None
+
+
+def page_matches_device(page: dict, device: dict) -> bool:
+    """未標記且無法推斷的舊頁面不允許新規則使用，避免跨面板錯誤顯示。"""
+    return _page_model_id(page) == device.get("model_id")
 
 
 def list_pages(user_id: str) -> list[dict]:
@@ -369,12 +500,15 @@ def _validate_page_content(content: Any) -> dict:
     return content
 
 
-def create_page(user_id: str, name: str, content: Any | None = None) -> dict:
+def create_page(user_id: str, name: str, content: Any | None = None, model_id: str | None = None) -> dict:
     if not isinstance(name, str) or not 1 <= len(name.strip()) <= 100:
         raise ValueError("頁面名稱必須為 1 至 100 個字元")
+    if model_id not in MODEL_IDS:
+        raise ValueError("建立頁面時必須選擇支援的面板型號")
     identifier, content = str(uuid.uuid4()), _validate_page_content(content or {"elements": []})
     with _db() as con:
-        con.execute("INSERT INTO pages(id,user_id,name,template_id,content_json) VALUES(?,?,?,?,?)", (identifier, user_id, name.strip(), "custom", _json(content)))
+        con.execute("INSERT INTO pages(id,user_id,name,template_id,content_json) VALUES(?,?,?,?,?)",
+                    (identifier, user_id, name.strip(), f"model:{model_id}", _json(content)))
         return _public_page(con.execute("SELECT * FROM pages WHERE id=?", (identifier,)).fetchone())
 
 
@@ -392,10 +526,14 @@ def _validate_rule(user_id: str, data: Any) -> dict:
     if not isinstance(data, dict):
         raise ValueError("規則必須是 JSON 物件")
     device_id, page_id = data.get("device_id"), data.get("page_id")
-    if not isinstance(device_id, str) or not get_device(user_id, device_id):
+    device = get_device(user_id, device_id) if isinstance(device_id, str) else None
+    if not device:
         raise ValueError("找不到所選 Pi")
-    if not isinstance(page_id, str) or not get_page(user_id, page_id):
+    page = get_page(user_id, page_id) if isinstance(page_id, str) else None
+    if not page:
         raise ValueError("找不到所選頁面")
+    if not page_matches_device(page, device):
+        raise ValueError("此頁面不支援所選 Pi 的面板型號")
     weekdays = data.get("weekdays", [])
     if not isinstance(weekdays, list) or any(not isinstance(day, int) or day not in range(7) for day in weekdays):
         raise ValueError("weekdays 必須是 0 到 6 的整數陣列")
@@ -512,15 +650,30 @@ def _attendance_status(user_id: str, day: dt.date) -> str:
     return "off_work" if row["clock_in"] and row["clock_out"] else "working" if row["clock_in"] else "pending"
 
 
-def _resolve_device_assignment(device: dict, now: dt.datetime) -> tuple[dict | None, dict | None, str, bool, list[dict]]:
+def _effective_attendance_status(user_id: str, now: dt.datetime, holiday: bool) -> tuple[str, bool]:
+    """回傳規則應使用的狀態與是否為下班保護時間的推導結果。
+
+    這是顯示端的 fail-safe，不改寫實際打卡紀錄；隔天早上仍能正常偵測上班卡。
+    """
+    status = _attendance_status(user_id, now.date())
+    auto_off_work = (
+        not holiday
+        and now.weekday() < 5
+        and status in {"pending", "working"}
+        and now.time() >= config.AUTO_OFF_WORK_TIME
+    )
+    return ("off_work" if auto_off_work else status), auto_off_work
+
+
+def _resolve_device_assignment(device: dict, now: dt.datetime) -> tuple[dict | None, dict | None, str, bool, bool, list[dict]]:
     """以 Pi 實際使用的規則邏輯選出此刻應顯示的頁面。"""
     holiday = now.date().isoformat() in set(store.get_holidays())
-    status = _attendance_status(device["user_id"], now.date())
+    status, auto_off_work = _effective_attendance_status(device["user_id"], now, holiday)
     rules = [rule for rule in list_rules(device["user_id"]) if rule["device_id"] == device["id"]]
     matching = [rule for rule in rules if _match_rule(rule, now, holiday, status)]
     chosen = max(matching, key=lambda rule: rule["priority"], default=None)
     page = get_page(device["user_id"], chosen["page_id"]) if chosen else None
-    return chosen, page, status, holiday, matching
+    return chosen, page, status, holiday, auto_off_work, matching
 
 
 def device_assignment(user_id: str, device_id: str, now: dt.datetime | None = None) -> dict | None:
@@ -529,13 +682,14 @@ def device_assignment(user_id: str, device_id: str, now: dt.datetime | None = No
     if not device:
         return None
     now = now or config.now_local()
-    chosen, page, status, holiday, matching = _resolve_device_assignment(device, now)
+    chosen, page, status, holiday, auto_off_work, matching = _resolve_device_assignment(device, now)
     rules = [rule for rule in list_rules(user_id) if rule["device_id"] == device_id]
     matching_ids = {rule["id"] for rule in matching}
     return {
         "device_id": device_id,
         "evaluated_at": now.isoformat(timespec="seconds"),
         "attendance_status": status,
+        "attendance_status_source": "auto_off_work" if auto_off_work else "record",
         "is_holiday": holiday,
         "active_rule": None if not chosen else {
             "id": chosen["id"], "name": chosen["name"], "priority": chosen["priority"], "page_id": chosen["page_id"],
@@ -559,26 +713,53 @@ def _page_layout(device: dict, page: dict | None, now: dt.datetime, *, scene: st
         if item.get("module_id") == "image":
             asset = get_asset(device["user_id"], str((item.get("config") or {}).get("asset_id", "")))
             if asset: data["filename"] = asset["filename"]
+        elif item.get("module_id") in {"attendance", "clock_in_badge"}:
+            # 新版 API 的 layout 必須與管理台／EIP 排程共用 SQLite 正本。舊版
+            # compositor 仍可透過各模組 fetch_data() 讀舊 JSON，維持相容。
+            data = attendance_snapshot(device["user_id"], now.date())
         else:
             try: data = module.fetch_data(item.get("config") or {})
             except Exception: data = {}
         elements.append({**item, "data": data})
+    marker = _daily_refresh_marker(device["profile"], now)
+    if marker:
+        # 舊版 Pi 也會把 elements/config 納入 layout signature；未知模組會被安全略過，
+        # 但 signature 改變仍會觸發一次全刷，不需要升級 Pi agent。
+        elements.append({
+            "instance_id": "_server-daily-refresh-marker",
+            "module_id": "_server_refresh_marker",
+            "x": 0, "y": 0, "w": 0, "h": 0, "z": -999,
+            "config": {"marker": marker}, "data": {}, "refresh_policy": "auto",
+        })
     return {"device_id": device["id"], "profile": device["profile"], "layout_id": page["id"] if page else None,
             "page_name": page["name"] if page else None, "scene": scene,
             "elements": elements, "resolved_at": now.isoformat(timespec="seconds")}
 
 
+def _daily_refresh_marker(profile: dict, now: dt.datetime) -> str | None:
+    """以排程前一日／當日的 marker 在指定時間點切換，供既有 Pi 觸發全刷。"""
+    daily_at = profile.get("server_full_refresh_daily_at")
+    if not isinstance(daily_at, str) or len(daily_at) != 5:
+        return None
+    try:
+        scheduled = dt.time.fromisoformat(daily_at)
+    except ValueError:
+        return None
+    marker_day = now.date() if now.time() >= scheduled else now.date() - dt.timedelta(days=1)
+    return f"{marker_day.isoformat()}@{daily_at}"
+
+
 def device_layout(device: dict, now: dt.datetime | None = None) -> dict:
     """為 token 所屬 Pi 建立版面，不透露他人裝置與素材。"""
     now = now or config.now_local()
-    chosen, page, _, _, _ = _resolve_device_assignment(device, now)
+    chosen, page, _, _, _, _ = _resolve_device_assignment(device, now)
     return _page_layout(device, page, now, scene=chosen["name"] if chosen else None)
 
 
 def preview_layout(user_id: str, device_id: str, page_id: str, now: dt.datetime | None = None) -> dict | None:
     """管理者預覽指定頁面；所有 device/page 查詢都限制在同一 owner 範圍。"""
     device, page = get_device(user_id, device_id), get_page(user_id, page_id)
-    if not device or not page:
+    if not device or not page or not page_matches_device(page, device):
         return None
     return _page_layout(device, page, now or config.now_local(), scene="預覽")
 

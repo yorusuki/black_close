@@ -43,11 +43,17 @@ def create_device():
 @auth.require_user
 def update_device(device_id):
     data = request.get_json(force=False) or {}
-    if set(data) != {"hidden"} or not isinstance(data["hidden"], bool):
-        return jsonify({"error": "invalid_device", "message": "僅可更新 hidden 布林值"}), 400
-    if not workspace_store.set_device_hidden(_user_id(), device_id, data["hidden"]):
-        return jsonify({"error": "not_found"}), 404
-    return jsonify(workspace_store.get_device(_user_id(), device_id))
+    if set(data) == {"hidden"} and isinstance(data["hidden"], bool):
+        if not workspace_store.set_device_hidden(_user_id(), device_id, data["hidden"]):
+            return jsonify({"error": "not_found"}), 404
+        return jsonify(workspace_store.get_device(_user_id(), device_id))
+    if set(data) == {"refresh"}:
+        try:
+            device = workspace_store.update_device_refresh(_user_id(), device_id, data["refresh"])
+        except ValueError as exc:
+            return jsonify({"error": "invalid_refresh", "message": str(exc)}), 400
+        return jsonify(device) if device else (jsonify({"error": "not_found"}), 404)
+    return jsonify({"error": "invalid_device", "message": "僅可更新 hidden 或 refresh"}), 400
 
 
 @bp.post("/devices/<device_id>/token")
@@ -95,7 +101,7 @@ def list_pages():
 def create_page():
     data = request.get_json(force=False) or {}
     try:
-        return jsonify(workspace_store.create_page(_user_id(), data.get("name"), data.get("content"))), 201
+        return jsonify(workspace_store.create_page(_user_id(), data.get("name"), data.get("content"), data.get("model_id"))), 201
     except ValueError as exc:
         return jsonify({"error": "invalid_page", "message": str(exc)}), 400
 

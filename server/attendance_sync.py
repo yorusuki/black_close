@@ -20,7 +20,7 @@ import sys
 import time
 from typing import Any, Callable
 
-from . import attendance, config, store
+from . import attendance, config, store, workspace_store
 
 log = logging.getLogger("server.attendance_sync")
 
@@ -138,7 +138,12 @@ def sync_once(
 ) -> bool:
     """需要同步且資料變更時回傳 True；不在窗口、失敗或資料相同時回傳 False。"""
     now = now or config.now_local()
-    current = attendance.get_record(now.date())
+    owner = workspace_store.sync_owner()
+    if not owner:
+        # 不猜測多使用者的 EIP 資料歸屬，也不在首次 LINE owner 尚未建立前寫入舊 JSON。
+        log.warning("出勤同步未執行：找不到唯一的工作區 owner")
+        return False
+    current = workspace_store.attendance_snapshot(owner["id"], now.date())
     window = polling_window(now, current)
     if window is None:
         return False
@@ -156,10 +161,11 @@ def sync_once(
         "出勤同步已解析：window=%s 上班=%s 下班=%s 今日請假=%s",
         window, clock_in, clock_out, "是" if on_leave else "否",
     )
-    if updated == current:
+    current_payload = {key: current.get(key) for key in ("clock_in", "clock_out", "on_leave", "leave_note")}
+    if updated == current_payload:
         log.info("出勤同步輸出：window=%s，資料未變更", window)
         return False
-    attendance.save_record(now.date(), updated)
+    workspace_store.save_attendance(owner["id"], now.date(), updated)
     log.info("出勤同步輸出：window=%s，已寫入出勤資料", window)
     return True
 
@@ -169,17 +175,20 @@ def run_forever() -> None:
     while True:
         started = time.monotonic()
         now = config.now_local()
-        current = attendance.get_record(now.date())
-        if polling_window(now, current):
+        # sync_once 內會再次確認唯一 owner、當日資料與時間窗口；若已打卡就不會
+        # 發出 EIP 請求。仍維持 30 秒 idle，讓下一個窗口能即時開始。
+        if is_workday(now.date()) and (MORNING_START <= now.time() < MORNING_END or EVENING_START <= now.time() < EVENING_END):
             sync_once(now)
             elapsed = time.monotonic() - started
             time.sleep(max(1, POLL_INTERVAL_SECONDS - elapsed))
-        else:
-            time.sleep(IDLE_INTERVAL_SECONDS)
+            continue
+        time.sleep(IDLE_INTERVAL_SECONDS)
 
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    # attendance-sync 是獨立容器；不可假設 web worker 已先完成 schema 初始化。
+    workspace_store.init()
     run_forever()
 
 
