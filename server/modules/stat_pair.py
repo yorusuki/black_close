@@ -32,7 +32,7 @@ class StatPairModule(BaseModule):
     refresh_policy = "partial"
     config_schema = [
         {"key": "title", "label": "標題", "type": "text", "default": ""},
-        {"key": "rows", "label": "資料列（JSON 陣列）", "type": "json", "default": [
+        {"key": "rows", "label": "資料列", "type": "json", "editor": "rows", "default": [
             {"label": "項目", "value_source": {"type": "manual", "value": "0"}}
         ]},
     ]

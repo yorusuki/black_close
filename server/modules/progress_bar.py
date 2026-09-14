@@ -54,12 +54,12 @@ class ProgressBarModule(BaseModule):
     refresh_policy = "partial"
     config_schema = [
         {"key": "title", "label": "標題", "type": "text", "default": "進度"},
-        {"key": "value_source", "label": "數值來源", "type": "json",
+        {"key": "value_source", "label": "數值來源", "type": "json", "editor": "value_source",
          "default": {"type": "manual", "value": 50}},
         {"key": "min", "label": "最小值", "type": "number", "default": 0},
         {"key": "max", "label": "最大值", "type": "number", "default": 100},
         {"key": "unit", "label": "單位", "type": "text", "default": "%"},
-        {"key": "footer_lines", "label": "附註文字列（JSON 陣列）", "type": "json", "default": []},
+        {"key": "footer_lines", "label": "附註文字列", "type": "json", "editor": "footer_lines", "default": []},
     ]
 
     def fetch_data(self, cfg):

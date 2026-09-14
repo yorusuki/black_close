@@ -37,7 +37,9 @@ class BaseModule:
     always_rerender: bool = False
 
     #: 給排版編輯器產生設定表單用的 JSON schema（簡化版，非完整 JSON Schema）。
-    #: 每個欄位: {"key":..., "label":..., "type": "text"|"number"|"json", "default":...}
+    #: 每個欄位: {"key":..., "label":..., "type": "text"|"number"|"json", "default":...}。
+    #: 複合欄位可額外宣告 editor（例如 value_source、footer_lines、rows、frames），
+    #: 管理台會將它轉成專用表單，不要求使用者直接編輯 JSON。
     config_schema: list[dict] = []
 
     def fetch_data(self, cfg: dict) -> dict:

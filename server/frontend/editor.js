@@ -154,15 +154,108 @@ function renderCanvas() {
   }
   renderElementList(); renderInspector();
 }
+function field(labelText, value = "", type = "text", data = {}) {
+  const label = document.createElement("label"); label.textContent = labelText;
+  const input = document.createElement("input"); input.type = type; input.value = value ?? "";
+  for (const [key, entry] of Object.entries(data)) input.dataset[key] = String(entry);
+  label.append(input); return label;
+}
+function check(labelText, checked, data = {}) {
+  const label = document.createElement("label"); label.className = "checkbox-field";
+  const input = document.createElement("input"); input.type = "checkbox"; input.checked = Boolean(checked);
+  for (const [key, entry] of Object.entries(data)) input.dataset[key] = String(entry);
+  label.append(input, document.createTextNode(labelText)); return label;
+}
+function sourceConfig(value, fallback = "") {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : { type: "manual", value: value ?? fallback };
+}
+function sourceEditor(value, fallback = "") {
+  const source = sourceConfig(value, fallback); const root = document.createElement("fieldset"); root.className = "source-editor";
+  const legend = document.createElement("legend"); legend.textContent = "數值來源"; root.append(legend);
+  const type = document.createElement("select"); type.dataset.sourceType = "true";
+  [["manual", "手動填寫"], ["battery", "Pi 電池資料"], ["time_until", "距離指定時間"], ["time_progress", "時間進度"], ["http", "HTTP API"]].forEach(([value, text]) => type.append(new Option(text, value)));
+  type.value = source.type || "manual"; const kind = document.createElement("label"); kind.textContent = "資料類型"; kind.append(type); root.append(kind);
+  const details = document.createElement("div"); details.className = "source-fields";
+  details.append(
+    field("手動數值／文字", source.value, "text", { sourceField: "value", sourceFor: "manual" }),
+    field("電池欄位", source.field || "percent", "text", { sourceField: "field", sourceFor: "battery" }),
+    field("無資料時顯示", source.fallback ?? fallback, "text", { sourceField: "fallback", sourceFor: "battery,time_until,time_progress,http" }),
+    field("目標時間", source.target, "time", { sourceField: "target", sourceFor: "time_until" }),
+    field("開始時間", source.start, "time", { sourceField: "start", sourceFor: "time_progress" }),
+    field("結束時間", source.end, "time", { sourceField: "end", sourceFor: "time_progress" }),
+    field("API 網址", source.url, "text", { sourceField: "url", sourceFor: "http" }),
+    field("資料路徑（選填）", source.path, "text", { sourceField: "path", sourceFor: "http" }),
+    field("逾時秒數", source.timeout ?? 5, "number", { sourceField: "timeout", sourceFor: "http" }),
+  );
+  const update = () => details.querySelectorAll("[data-source-for]").forEach((input) => { input.parentElement.hidden = !input.dataset.sourceFor.split(",").includes(type.value); });
+  type.onchange = update; update(); root.append(details); return root;
+}
+function readSource(root) {
+  const get = (name) => root.querySelector(`[data-source-field="${name}"]`)?.value ?? ""; const type = root.querySelector("[data-source-type]")?.value || "manual";
+  if (type === "manual") return { type, value: get("value") };
+  if (type === "battery") return { type, field: get("field") || "percent", fallback: get("fallback") };
+  if (type === "time_until") return { type, target: get("target"), fallback: get("fallback") };
+  if (type === "time_progress") return { type, start: get("start"), end: get("end"), fallback: get("fallback") };
+  return { type: "http", url: get("url"), path: get("path"), fallback: get("fallback"), timeout: Number(get("timeout")) || 5 };
+}
+function complexButton(text, action) {
+  const button = document.createElement("button"); button.type = "button"; button.className = "button button-secondary button-small"; button.textContent = text; button.onclick = action; return button;
+}
+function updateComplex(mutator) {
+  const item = selectedElement(); if (!item) return; collectModuleConfig(item); mutator(item.config); renderInspector();
+}
+function footerLinesEditor(schema, item) {
+  const root = document.createElement("fieldset"); root.className = "complex-editor"; root.dataset.complex = "footer_lines"; root.dataset.key = schema.key;
+  const legend = document.createElement("legend"); legend.textContent = schema.label; root.append(legend);
+  const lines = Array.isArray(item.config?.[schema.key]) ? item.config[schema.key] : (schema.default || []);
+  lines.forEach((line, index) => { const row = document.createElement("section"); row.className = "complex-row"; row.dataset.line = String(index); const dynamic = Boolean(line?.value_source);
+    const mode = document.createElement("select"); mode.dataset.lineMode = "true"; mode.append(new Option("固定文字", "text"), new Option("動態數值", "source")); mode.value = dynamic ? "source" : "text";
+    const modeLabel = document.createElement("label"); modeLabel.textContent = "內容"; modeLabel.append(mode); const text = field("文字", line?.text || "", "text", { lineField: "text" }); const source = sourceEditor(line?.value_source, ""); source.dataset.lineSource = "true";
+    const sync = () => { text.hidden = mode.value !== "text"; source.hidden = mode.value !== "source"; }; mode.onchange = sync; sync();
+    const remove = complexButton("移除此列", () => updateComplex((config) => { config[schema.key] = (config[schema.key] || []).filter((_, position) => position !== index); }));
+    row.append(modeLabel, text, source, check("大字", line?.big, { lineField: "big" }), check("置中", line?.center !== false, { lineField: "center" }), remove); root.append(row);
+  });
+  root.append(complexButton("新增附註列", () => updateComplex((config) => { (config[schema.key] ||= []).push({ text: "" }); }))); return root;
+}
+function rowsEditor(schema, item) {
+  const root = document.createElement("fieldset"); root.className = "complex-editor"; root.dataset.complex = "rows"; root.dataset.key = schema.key;
+  const legend = document.createElement("legend"); legend.textContent = schema.label; root.append(legend);
+  const rows = Array.isArray(item.config?.[schema.key]) ? item.config[schema.key] : (schema.default || []);
+  rows.forEach((rowData, index) => { const row = document.createElement("section"); row.className = "complex-row"; row.dataset.row = String(index); const remove = complexButton("移除此列", () => updateComplex((config) => { config[schema.key] = (config[schema.key] || []).filter((_, position) => position !== index); })); row.append(field("標籤", rowData?.label || "", "text", { rowField: "label" }), sourceEditor(rowData?.value_source, ""), field("單位／尾碼", rowData?.suffix || "", "text", { rowField: "suffix" }), check("大字顯示", rowData?.big, { rowField: "big" }), remove); root.append(row); });
+  root.append(complexButton("新增資料列", () => updateComplex((config) => { (config[schema.key] ||= []).push({ label: "項目", value_source: { type: "manual", value: "" } }); }))); return root;
+}
+function framesEditor(schema, item) {
+  const root = document.createElement("fieldset"); root.className = "complex-editor"; root.dataset.complex = "frames"; root.dataset.key = schema.key;
+  const legend = document.createElement("legend"); legend.textContent = schema.label; root.append(legend);
+  const frames = Array.isArray(item.config?.[schema.key]) ? item.config[schema.key] : (schema.default || []);
+  frames.forEach((frame, index) => { const row = document.createElement("section"); row.className = "complex-row frame-row"; row.dataset.frame = String(index); const remove = complexButton("移除此影格", () => updateComplex((config) => { config[schema.key] = (config[schema.key] || []).filter((_, position) => position !== index); })); row.append(field("AA 表情", frame?.face || "", "text", { frameField: "face" }), field("台詞", frame?.line || "", "text", { frameField: "line" }), remove); root.append(row); });
+  root.append(complexButton("新增影格", () => updateComplex((config) => { (config[schema.key] ||= []).push({ face: "(・ω・)", line: "" }); }))); return root;
+}
+function complexEditor(schema, item) {
+  if (schema.editor === "value_source") { const root = sourceEditor(item.config?.[schema.key] ?? schema.default); root.dataset.complex = "value_source"; root.dataset.key = schema.key; return root; }
+  if (schema.editor === "footer_lines") return footerLinesEditor(schema, item);
+  if (schema.editor === "rows") return rowsEditor(schema, item);
+  if (schema.editor === "frames") return framesEditor(schema, item);
+  const note = document.createElement("p"); note.className = "hint"; note.textContent = "此設定尚未提供專用表單，為避免覆蓋既有資料，暫時不在管理台修改。"; return note;
+}
+function collectModuleConfig(item) {
+  const fields = el("config-fields"); item.config ||= {};
+  for (const input of fields.querySelectorAll("[data-key]")) item.config[input.dataset.key] = input.dataset.type === "number" ? Number(input.value) : input.value;
+  for (const root of fields.querySelectorAll("[data-complex]")) {
+    const key = root.dataset.key; if (root.dataset.complex === "value_source") item.config[key] = readSource(root);
+    if (root.dataset.complex === "footer_lines") item.config[key] = [...root.querySelectorAll("[data-line]")].map((line) => { const result = { big: line.querySelector('[data-line-field="big"]')?.checked, center: line.querySelector('[data-line-field="center"]')?.checked }; return line.querySelector("[data-line-mode]")?.value === "source" ? { ...result, value_source: readSource(line.querySelector(".source-editor")) } : { ...result, text: line.querySelector('[data-line-field="text"]')?.value || "" }; });
+    if (root.dataset.complex === "rows") item.config[key] = [...root.querySelectorAll("[data-row]")].map((row) => ({ label: row.querySelector('[data-row-field="label"]')?.value || "", value_source: readSource(row.querySelector(".source-editor")), suffix: row.querySelector('[data-row-field="suffix"]')?.value || "", big: row.querySelector('[data-row-field="big"]')?.checked }));
+    if (root.dataset.complex === "frames") item.config[key] = [...root.querySelectorAll("[data-frame]")].map((frame) => ({ face: frame.querySelector('[data-frame-field="face"]')?.value || "", line: frame.querySelector('[data-frame-field="line"]')?.value || "" }));
+  }
+}
 function renderInspector() {
   const item = selectedElement(); el("element-form").hidden = !item; el("element-empty").hidden = Boolean(item); if (!item) return;
   const module = moduleFor(item); el("selected-module-name").textContent = module ? `${module.display_name} · ${module.description}` : item.module_id;
   for (const [id, value] of [["el-x", item.x], ["el-y", item.y], ["el-w", item.w], ["el-h", item.h], ["el-z", item.z || 0], ["el-refresh", item.refresh_interval || 30]]) el(id).value = String(value);
   const fields = el("config-fields"); fields.replaceChildren();
   for (const schema of module?.config_schema || []) {
-    const label = document.createElement("label"); label.textContent = schema.label || schema.key;
-    if (schema.type === "json") { const note = document.createElement("p"); note.className = "hint"; note.textContent = "此為複合型設定，保留既有值；需要專用操作面板時可依模組個別擴充。"; label.append(note); fields.append(label); continue; }
-    const input = document.createElement("input"); input.type = schema.type === "number" ? "number" : "text"; input.dataset.key = schema.key; input.dataset.type = schema.type || "text"; input.value = item.config?.[schema.key] ?? schema.default ?? ""; label.append(input); fields.append(label);
+    if (schema.type === "json") { fields.append(complexEditor(schema, item)); continue; }
+    const input = field(schema.label || schema.key, item.config?.[schema.key] ?? schema.default ?? "", schema.type === "number" ? "number" : "text", { key: schema.key, type: schema.type || "text" }); fields.append(input);
   }
 }
 function renderPage() { if (!state.page) { renderAssignment(); return; } el("page-name").value = state.page.name; el("page-select").value = state.page.id; renderCanvas(); renderAssignment(); }
@@ -190,8 +283,8 @@ function applyElement(event) {
   event.preventDefault(); const item = selectedElement(); if (!item) return;
   const values = ["el-x", "el-y", "el-w", "el-h", "el-z", "el-refresh"].map((id) => Number(el(id).value)); if (values.some((value) => !Number.isFinite(value))) { notify("位置與尺寸必須是數字", true); return; }
   const [x, y, width, height, z, refresh] = values; if (x < 0 || y < 0 || width < 1 || height < 1 || refresh < 1) { notify("位置、尺寸與更新秒數不正確", true); return; }
-  item.x = clamp(x, 0, state.canvas.width - width); item.y = clamp(y, 0, state.canvas.height - height); item.w = Math.min(width, state.canvas.width - item.x); item.h = Math.min(height, state.canvas.height - item.y); item.z = z; item.refresh_interval = refresh; item.config ||= {};
-  for (const input of el("config-fields").querySelectorAll("[data-key]")) item.config[input.dataset.key] = input.dataset.type === "number" ? Number(input.value) : input.value;
+  item.x = clamp(x, 0, state.canvas.width - width); item.y = clamp(y, 0, state.canvas.height - height); item.w = Math.min(width, state.canvas.width - item.x); item.h = Math.min(height, state.canvas.height - item.y); item.z = z; item.refresh_interval = refresh;
+  collectModuleConfig(item);
   renderPage(); notify("元件設定已套用，記得儲存");
 }
 

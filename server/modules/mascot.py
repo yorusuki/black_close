@@ -39,7 +39,7 @@ class MascotModule(BaseModule):
     refresh_policy = "partial"
     always_rerender = True
     config_schema = [
-        {"key": "frames", "label": "影格（JSON 陣列，每項含 face/line）", "type": "json",
+        {"key": "frames", "label": "影格", "type": "json", "editor": "frames",
          "default": _DEFAULT_FRAMES},
         {"key": "interval_seconds", "label": "輪播間隔秒數（僅支援局部刷新的裝置生效）",
          "type": "number", "default": 5},
