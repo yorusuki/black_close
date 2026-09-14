@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+data/preview/*.png
+data/runtime/
+data/attendance.json
+data/*.sqlite3
+data/*.sqlite3-shm
+data/*.sqlite3-wal
+device_agent/config.yaml
+docker/.env
+feat/slip/.env
+.venv/
