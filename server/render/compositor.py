@@ -8,7 +8,7 @@
   - 裝置若不支援局部刷新：套用「最短整幅刷新間隔」節流，避免像動畫這種高頻變動
     去頻繁觸發整幅刷新（電子紙整幅刷新較傷面板、也比較慢）。
   - 裝置若支援局部刷新：一般變動局刷；首次輸出、版面切換與模組明確指定時整幅刷新，
-    並在可設定的間隔（微雪預設 5 小時）或每日指定時間全刷，避免殘影累積。
+    並在可設定的間隔或每日指定時間（微雪預設每天 12:00）全刷，避免殘影累積。
 
 這個模組拆成兩段（對應 docs/IMPLEMENTATION_NOTES.md「拆分模式改成樹莓派本機渲染」）：
 
@@ -130,7 +130,7 @@ def _decide_refresh_mode(
     device_id: str,
     profile: dict,
     dirty_boxes: list,
-    policies: set[str],
+    dirty_policies: set[str],
     now: datetime.datetime,
     *,
     layout_changed: bool,
@@ -164,7 +164,7 @@ def _decide_refresh_mode(
 
     # 第一次輸出、切換場景／layout、或有模組明確要求時，一律整幅刷新。這可避免
     # 移除元件後舊像素殘留，也讓「下班／週末」切到靜態頁面時畫面狀態確定一致。
-    if layout_changed or "full" in policies:
+    if layout_changed or "full" in dirty_policies:
         _partial_count_since_full[device_id] = 0
         _last_full_refresh[device_id] = now.timestamp()
         return "full", dirty_boxes
@@ -191,12 +191,12 @@ def _decide_refresh_mode(
 
 
 def _layout_signature(resolved: dict) -> str:
-    """只描述結構，不含動態 data；同 layout 內容變更也必須強制全刷。"""
+    """只描述會遺留舊像素的結構，不含可局刷覆蓋的內容設定。"""
     elements = []
     for el in resolved.get("elements", []):
         elements.append({
             key: el.get(key)
-            for key in ("instance_id", "module_id", "x", "y", "w", "h", "z", "config", "refresh_policy")
+            for key in ("instance_id", "module_id", "x", "y", "w", "h", "z")
         })
     raw = json.dumps(
         {"layout_id": resolved.get("layout_id"), "scene": resolved.get("scene"), "elements": elements},
@@ -219,7 +219,7 @@ def render_from_elements(resolved: dict, now: datetime.datetime | None = None):
 
     canvas = Image.new("RGB", tuple(profile["resolution"]), "white")
     dirty_boxes = []
-    policies: set[str] = set()
+    dirty_policies: set[str] = set()
     signature = _layout_signature(resolved)
     layout_changed = _last_layout_signature.get(device_id) != signature
 
@@ -247,9 +247,9 @@ def render_from_elements(resolved: dict, now: datetime.datetime | None = None):
         box = [x, y, size[0], size[1]]
         if prev is None or prev[0] != state_hash:
             dirty_boxes.append(box)
+            policy = el.get("refresh_policy", module.refresh_policy)
+            dirty_policies.add(policy if policy in {"auto", "partial", "full"} else "auto")
         _last_element_state[key] = (state_hash, box)
-        policy = el.get("refresh_policy", module.refresh_policy)
-        policies.add(policy if policy in {"auto", "partial", "full"} else "auto")
 
     if layout_changed:
         # 即使新舊內容剛好相同，切換過的 layout 也要完整清屏一次。
@@ -257,7 +257,7 @@ def render_from_elements(resolved: dict, now: datetime.datetime | None = None):
 
     final = device_profiles.quantize(canvas, profile)
     refresh_mode, out_boxes = _decide_refresh_mode(
-        device_id, profile, dirty_boxes, policies, now, layout_changed=layout_changed,
+        device_id, profile, dirty_boxes, dirty_policies, now, layout_changed=layout_changed,
     )
     _last_layout_signature[device_id] = signature
 

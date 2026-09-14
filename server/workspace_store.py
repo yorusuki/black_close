@@ -26,6 +26,7 @@ _WORK_LAYOUT_UPGRADE_KEY = "waveshare_work_layout_v2"
 _WORK_LAYOUT_MASCOT_INTERVAL_UPGRADE_KEY = "waveshare_work_layout_mascot_interval_v3"
 _REFRESH_POLICY_UPGRADE_KEY = "waveshare_refresh_policy_v2"
 _OFF_WORK_LAYOUT_UPGRADE_KEY = "waveshare_off_work_greetings_v1"
+_REFRESH_POLICY_DAILY_DEFAULT_UPGRADE_KEY = "waveshare_refresh_daily_default_v3"
 _ONLINE_AFTER_SECONDS = 180
 
 
@@ -342,6 +343,42 @@ def upgrade_default_refresh_policy() -> int:
         return updated
 
 
+def upgrade_default_refresh_policy_to_daily() -> int:
+    """將尚未自訂的 5 小時預設保護週期改為每日中午一次全刷。
+
+    此判斷只處理沒有日排程標記、且仍剛好是前版預設 18,000 秒的局刷面板；
+    使用者已選過其他間隔或每日時間的裝置一律保留。
+    """
+    with _db() as con:
+        done = con.execute(
+            "SELECT 1 FROM schema_metadata WHERE key=?", (_REFRESH_POLICY_DAILY_DEFAULT_UPGRADE_KEY,)
+        ).fetchone()
+        if done:
+            return 0
+        rows = con.execute("SELECT id,profile_json FROM devices").fetchall()
+        updated = 0
+        for row in rows:
+            profile = _parse_json(row["profile_json"], {})
+            if (
+                not isinstance(profile, dict)
+                or not profile.get("partial_refresh")
+                or profile.get("full_refresh_interval_seconds") != 18_000
+                or profile.get("server_full_refresh_daily_at")
+                or profile.get("full_refresh_daily_at")
+            ):
+                continue
+            profile["full_refresh_interval_seconds"] = 86_400
+            profile["server_full_refresh_daily_at"] = "12:00"
+            profile["full_refresh_daily_at"] = "12:00"
+            con.execute("UPDATE devices SET profile_json=? WHERE id=?", (_json(profile), row["id"]))
+            updated += 1
+        con.execute(
+            "INSERT INTO schema_metadata(key,value) VALUES(?,?)",
+            (_REFRESH_POLICY_DAILY_DEFAULT_UPGRADE_KEY, str(updated)),
+        )
+        return updated
+
+
 def user_by_id(user_id: str) -> dict | None:
     with _db() as con:
         return _row(con.execute("SELECT * FROM users WHERE id=? AND is_placeholder=0", (user_id,)).fetchone())
@@ -455,8 +492,8 @@ def create_device(user_id: str, name: str, model_id: str, profile: dict | None =
         raise ValueError("不支援的硬體型號")
     profiles = {
         "inky_phat": {"driver": "inky_phat", "resolution": [212, 104], "color_mode": "3color", "partial_refresh": False},
-        "waveshare_4in26": {"driver": "waveshare_4in26", "resolution": [800, 480], "color_mode": "1bit", "partial_refresh": True, "full_refresh_interval_seconds": 18_000},
-        "mock": {"driver": "mock", "resolution": [800, 480], "color_mode": "1bit", "partial_refresh": True, "full_refresh_interval_seconds": 18_000},
+        "waveshare_4in26": {"driver": "waveshare_4in26", "resolution": [800, 480], "color_mode": "1bit", "partial_refresh": True, "full_refresh_interval_seconds": 86_400, "server_full_refresh_daily_at": "12:00", "full_refresh_daily_at": "12:00"},
+        "mock": {"driver": "mock", "resolution": [800, 480], "color_mode": "1bit", "partial_refresh": True, "full_refresh_interval_seconds": 86_400, "server_full_refresh_daily_at": "12:00", "full_refresh_daily_at": "12:00"},
     }
     token, token_hash, identifier = *issue_device_token(), str(uuid.uuid4())
     with _db() as con:

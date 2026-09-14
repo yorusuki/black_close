@@ -26,6 +26,7 @@ def create_app() -> Flask:
     workspace_store.upgrade_default_mascot_interval()
     workspace_store.upgrade_default_off_work_layout()
     workspace_store.upgrade_default_refresh_policy()
+    workspace_store.upgrade_default_refresh_policy_to_daily()
 
     for bp in BLUEPRINTS:
         app.register_blueprint(bp)
