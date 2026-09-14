@@ -1,6 +1,6 @@
 "use strict";
 
-const state = { csrf: "", modules: [], devices: [], pages: [], rules: [], page: null, selected: null, assignment: null, refreshDeviceId: null, activeTab: "overview", drag: null, canvas: { width: 800, height: 480, scale: 1 } };
+const state = { csrf: "", modules: [], devices: [], pages: [], rules: [], page: null, selected: null, assignment: null, refreshDeviceId: null, activeTab: "overview", layoutView: "canvas", drag: null, canvas: { width: 800, height: 480, scale: 1 } };
 const el = (id) => document.getElementById(id);
 const clone = (value) => value === undefined ? null : JSON.parse(JSON.stringify(value));
 const modelLabel = { waveshare_4in26: "Waveshare 4.26 吋", inky_phat: "Pimoroni Inky pHAT", mock: "Mock 預覽裝置" };
@@ -57,6 +57,17 @@ function switchTab(name) {
   history.replaceState(null, "", `#${name}`);
   if (name === "content") Promise.all([loadAssets(), loadAttendance()]).catch(message);
   if (name === "layouts") renderPage();
+}
+
+function switchLayoutView(name) {
+  state.layoutView = name === "preview" ? "preview" : "canvas";
+  document.querySelectorAll("[data-layout-view]").forEach((tab) => {
+    tab.setAttribute("aria-selected", String(tab.dataset.layoutView === state.layoutView));
+  });
+  document.querySelectorAll("[data-layout-pane]").forEach((pane) => {
+    pane.hidden = pane.dataset.layoutPane !== state.layoutView;
+  });
+  if (state.layoutView === "preview") updatePreview();
 }
 
 function renderSummary() {
@@ -154,17 +165,35 @@ function updateCanvasDimensions() {
   const canvas = el("layout-canvas"); canvas.style.width = `${Math.max(1, Math.round(width * scale))}px`; canvas.style.height = `${Math.max(1, Math.round(height * scale))}px`;
   el("canvas-meta").textContent = `${width} × ${height} px · 畫面以 ${Math.round(scale * 100)}% 顯示 · 拖曳與縮放採 8px 吸附`;
 }
+function boundsFor(item) {
+  return { x: Number(item.x), y: Number(item.y), w: Number(item.w), h: Number(item.h) };
+}
+function overflowFor(item) {
+  const { x, y, w, h } = boundsFor(item);
+  if (![x, y, w, h].every(Number.isFinite) || w < 1 || h < 1) return "位置或尺寸不是有效數字";
+  const messages = [];
+  if (x < 0) messages.push(`左側 ${Math.abs(x)}px`);
+  if (y < 0) messages.push(`頂部 ${Math.abs(y)}px`);
+  if (x + w > state.canvas.width) messages.push(`右側 ${x + w - state.canvas.width}px`);
+  if (y + h > state.canvas.height) messages.push(`底部 ${y + h - state.canvas.height}px`);
+  return messages.join("、");
+}
+function outOfBoundsElements() {
+  return (state.page?.content?.elements || []).filter((item) => overflowFor(item));
+}
 function renderElementList() {
   // 選取狀態已直接呈現在畫布；此函式保留為畫布重繪的單一入口。
 }
 function renderCanvas() {
   updateCanvasDimensions(); const canvas = el("layout-canvas"); canvas.replaceChildren();
   for (const item of state.page?.content?.elements || []) {
-    const module = moduleFor(item); const node = document.createElement("button"); node.type = "button"; node.className = `canvas-element${item.instance_id === state.selected ? " selected" : ""}`; node.dataset.id = item.instance_id;
+    const module = moduleFor(item); const overflow = overflowFor(item); const node = document.createElement("button"); node.type = "button"; node.className = `canvas-element${item.instance_id === state.selected ? " selected" : ""}${overflow ? " out-of-bounds" : ""}`; node.dataset.id = item.instance_id;
     const scale = state.canvas.scale; Object.assign(node.style, { left: `${item.x * scale}px`, top: `${item.y * scale}px`, width: `${Math.max(8, item.w * scale)}px`, height: `${Math.max(8, item.h * scale)}px`, zIndex: String((item.z || 0) + 1) });
-    const title = document.createElement("strong"); title.textContent = module?.display_name || item.module_id; const info = document.createElement("small"); info.textContent = `${item.x}, ${item.y} · ${item.w}×${item.h}`; const handle = document.createElement("span"); handle.className = "resize-handle"; handle.setAttribute("aria-label", "縮放元件"); node.append(title, info, handle);
+    const title = document.createElement("strong"); title.textContent = module?.display_name || item.module_id; const info = document.createElement("small"); info.textContent = `${item.x}, ${item.y} · ${item.w}×${item.h}${overflow ? ` · 超出：${overflow}` : ""}`; const handle = document.createElement("span"); handle.className = "resize-handle"; handle.setAttribute("aria-label", "縮放元件"); node.append(title, info, handle);
     node.addEventListener("pointerdown", (event) => beginDrag(event, item.instance_id, event.target === handle ? "resize" : "move")); canvas.append(node);
   }
+  const invalid = outOfBoundsElements();
+  if (invalid.length) el("canvas-meta").textContent += ` · ⚠ ${invalid.length} 個元件超出面板，請在儲存前修正`;
   renderElementList(); renderInspector();
 }
 function field(labelText, value = "", type = "text", data = {}) {
@@ -242,7 +271,17 @@ function framesEditor(schema, item) {
   const root = document.createElement("fieldset"); root.className = "complex-editor"; root.dataset.complex = "frames"; root.dataset.key = schema.key;
   const legend = document.createElement("legend"); legend.textContent = schema.label; root.append(legend);
   const frames = Array.isArray(item.config?.[schema.key]) ? item.config[schema.key] : (schema.default || []);
-  frames.forEach((frame, index) => { const row = document.createElement("section"); row.className = "complex-row frame-row"; row.dataset.frame = String(index); const remove = complexButton("移除此影格", () => updateComplex((config) => { config[schema.key] = (config[schema.key] || []).filter((_, position) => position !== index); })); row.append(field("AA 人物／動作（可換行）", frame?.art || frame?.face || "", "textarea", { frameField: "art" }), field("台詞", frame?.line || "", "text", { frameField: "line" }), remove); root.append(row); });
+  frames.forEach((frame, index) => {
+    const card = document.createElement("section"); card.className = "frame-card"; card.dataset.frame = String(index);
+    const header = document.createElement("div"); header.className = "frame-card-header";
+    const title = document.createElement("strong"); title.textContent = `影格 ${index + 1}`;
+    const remove = complexButton("移除此影格", () => updateComplex((config) => { config[schema.key] = (config[schema.key] || []).filter((_, position) => position !== index); }));
+    header.append(title, remove);
+    const fields = document.createElement("div"); fields.className = "frame-fields";
+    const art = field("AA 人物／動作（可換行）", frame?.art || frame?.face || "", "textarea", { frameField: "art" }); art.classList.add("frame-art-field");
+    const line = field("台詞", frame?.line || "", "textarea", { frameField: "line" }); line.classList.add("frame-line-field");
+    fields.append(art, line); card.append(header, fields); root.append(card);
+  });
   root.append(complexButton("新增影格", () => updateComplex((config) => { (config[schema.key] ||= []).push({ art: "  (・ω・)\\n   |   |\\n  _| |_ ", line: "" }); }))); return root;
 }
 function complexEditor(schema, item) {
@@ -271,8 +310,11 @@ function renderInspector() {
     if (schema.type === "json") { fields.append(complexEditor(schema, item)); continue; }
     const input = field(schema.label || schema.key, item.config?.[schema.key] ?? schema.default ?? "", schema.type === "number" ? "number" : "text", { key: schema.key, type: schema.type || "text" });
     const control = input.querySelector("input"); if (schema.type === "number") { if (schema.min !== undefined) control.min = String(schema.min); if (schema.max !== undefined) control.max = String(schema.max); }
+    if (schema.help) { const help = document.createElement("span"); help.className = "field-help"; help.textContent = schema.help; input.append(help); }
     fields.append(input);
   }
+  const refreshField = el("el-refresh").closest("label");
+  refreshField.hidden = module?.module_id === "mascot";
 }
 function renderPage() { syncPageOptions(); if (!state.page) { renderAssignment(); return; } el("page-name").value = state.page.name; renderCanvas(); renderAssignment(); }
 function snap(value) { return Math.round(value / 8) * 8; }
@@ -306,11 +348,13 @@ function applyElement(event) {
 
 async function loadPage(id) { state.page = await api(`/api/workspace/pages/${id}`); state.selected = null; renderPage(); updatePreview(); }
 async function savePage() {
-  if (!state.page) return; try { const name = el("page-name").value.trim(); const page = await api(`/api/workspace/pages/${state.page.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, content: state.page.content }) }); state.page = page; await refresh(false); await loadDeviceAssignment(); renderPage(); updatePreview(); const activePageId = state.assignment?.active_page?.id; const assigned = state.assignment?.rules?.some((rule) => rule.page_id === state.page.id); notify(activePageId === state.page.id ? "版面已儲存；此 Pi 下次取得版面時會套用新內容" : assigned ? "版面已儲存；此頁面會在對應規則符合時套用" : "版面已儲存；尚未指派給目前這台 Pi"); } catch (error) { message(error); }
+  if (!state.page) return; const invalid = outOfBoundsElements(); if (invalid.length) { switchLayoutView("canvas"); notify(`有 ${invalid.length} 個元件超出目前面板範圍，請先調整紅色元件。`, true); return; } try { const name = el("page-name").value.trim(); const page = await api(`/api/workspace/pages/${state.page.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, content: state.page.content }) }); state.page = page; await refresh(false); await loadDeviceAssignment(); renderPage(); updatePreview(); const activePageId = state.assignment?.active_page?.id; const assigned = state.assignment?.rules?.some((rule) => rule.page_id === state.page.id); notify(activePageId === state.page.id ? "版面已儲存；此 Pi 下次取得版面時會套用新內容" : assigned ? "版面已儲存；此頁面會在對應規則符合時套用" : "版面已儲存；尚未指派給目前這台 Pi"); } catch (error) { message(error); }
 }
 function updatePreview() {
   const deviceId = editorDevice()?.id; const image = el("layout-preview"); const empty = el("preview-empty");
   if (!state.page || !deviceId || !pagesForDevice(editorDevice()).some((page) => page.id === state.page.id)) { image.hidden = true; empty.hidden = false; empty.textContent = "請選擇與目前 Pi 面板型號相符的頁面。"; return; }
+  const invalid = outOfBoundsElements();
+  if (invalid.length) { image.hidden = true; empty.hidden = false; empty.textContent = `有 ${invalid.length} 個元件超出面板範圍；請回到「編輯畫布」修正紅色元件後再預覽。`; return; }
   image.hidden = false; empty.hidden = true; image.src = `/api/workspace/devices/${encodeURIComponent(deviceId)}/preview?page_id=${encodeURIComponent(state.page.id)}&t=${Date.now()}`;
   image.onerror = () => { image.hidden = true; empty.hidden = false; empty.textContent = "預覽產生失敗，請確認設備與版面仍存在。"; };
 }
@@ -339,7 +383,7 @@ async function refresh(loadSelected = true) {
 }
 
 function bindEvents() {
-  document.querySelectorAll(".tab").forEach((tab) => tab.addEventListener("click", () => switchTab(tab.dataset.tab))); document.querySelectorAll("[data-open-tab]").forEach((button) => button.addEventListener("click", () => switchTab(button.dataset.openTab)));
+  document.querySelectorAll(".tab").forEach((tab) => tab.addEventListener("click", () => switchTab(tab.dataset.tab))); document.querySelectorAll("[data-open-tab]").forEach((button) => button.addEventListener("click", () => switchTab(button.dataset.openTab))); document.querySelectorAll("[data-layout-view]").forEach((tab) => tab.addEventListener("click", () => switchLayoutView(tab.dataset.layoutView)));
   el("device-form").onsubmit = async (event) => { event.preventDefault(); try { const result = await api("/api/workspace/devices", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: el("device-name").value, model_id: el("device-model").value }) }); el("device-name").value = ""; await refresh(); showToken(result.token); notify("設備已建立"); } catch (error) { message(error); } };
   el("new-page").onclick = async () => { try { const device = editorDevice(); if (!device) throw new Error("請先選擇要建立版型的 Pi"); const page = await api("/api/workspace/pages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: el("new-page-name").value, model_id: device.model_id }) }); el("new-page-name").value = ""; state.page = page; await refresh(false); renderPage(); switchTab("layouts"); notify("新頁面已建立，僅可用於目前面板型號"); } catch (error) { message(error); } };
   el("page-select").onchange = () => loadPage(el("page-select").value).catch(message); el("save-page").onclick = savePage; el("canvas-device").onchange = async () => { try { await loadDeviceAssignment(true); if (!state.assignment?.active_page) { const fallback = pagesForDevice(editorDevice())[0]; if (fallback) await loadPage(fallback.id); } renderPage(); } catch (error) { message(error); } }; el("rule-device").onchange = syncRulePageOptions; el("load-active-page").onclick = () => { const pageId = state.assignment?.active_page?.id; if (pageId) loadPage(pageId).catch(message); }; el("refresh-preview").onclick = updatePreview; el("element-form").onsubmit = applyElement;

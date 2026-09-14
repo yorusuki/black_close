@@ -23,6 +23,7 @@ def create_app() -> Flask:
     workspace_store.init()
     workspace_store.migrate_legacy_json()
     workspace_store.upgrade_default_work_layout()
+    workspace_store.upgrade_default_mascot_interval()
     workspace_store.upgrade_default_refresh_policy()
 
     for bp in BLUEPRINTS:

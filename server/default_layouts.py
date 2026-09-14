@@ -22,8 +22,8 @@ _WAVESHARE_WORK_LAYOUT = {
         },
         {
             "instance_id": "mascot-work-main", "module_id": "mascot",
-            "x": 32, "y": 132, "w": 736, "h": 184, "z": 1, "refresh_interval": 120,
-            "refresh_policy": "partial", "config": {"interval_seconds": 120},
+            "x": 32, "y": 132, "w": 736, "h": 184, "z": 1, "refresh_interval": 6,
+            "refresh_policy": "partial", "config": {"interval_seconds": 6},
         },
         {
             "instance_id": "workday-progress", "module_id": "progress_bar",

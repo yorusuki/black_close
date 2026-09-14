@@ -15,9 +15,15 @@ from typing import Any
 from . import config, store
 
 MODEL_IDS = {"inky_phat", "waveshare_4in26", "mock"}
+_MODEL_RESOLUTIONS = {
+    "inky_phat": (212, 104),
+    "waveshare_4in26": (800, 480),
+    "mock": (800, 480),
+}
 _PLACEHOLDER_USER_ID = "legacy-unassigned"
 _MIGRATION_KEY = "legacy_json_v1"
 _WORK_LAYOUT_UPGRADE_KEY = "waveshare_work_layout_v2"
+_WORK_LAYOUT_MASCOT_INTERVAL_UPGRADE_KEY = "waveshare_work_layout_mascot_interval_v3"
 _REFRESH_POLICY_UPGRADE_KEY = "waveshare_refresh_policy_v2"
 _ONLINE_AFTER_SECONDS = 180
 
@@ -223,6 +229,45 @@ def upgrade_default_work_layout() -> bool:
         )
         con.execute("INSERT INTO schema_metadata(key,value) VALUES(?,?)", (_WORK_LAYOUT_UPGRADE_KEY, "1"))
         return True
+
+
+def upgrade_default_mascot_interval() -> int:
+    """將尚未自訂、仍使用舊 120 秒 AA 輪播的預設工作頁改為 6 秒。"""
+    with _db() as con:
+        done = con.execute(
+            "SELECT 1 FROM schema_metadata WHERE key=?", (_WORK_LAYOUT_MASCOT_INTERVAL_UPGRADE_KEY,)
+        ).fetchone()
+        if done:
+            return 0
+        rows = con.execute(
+            "SELECT id,content_json FROM pages WHERE legacy_id='waveshare426-01_dashboard'"
+        ).fetchall()
+        updated = 0
+        for row in rows:
+            content = _parse_json(row["content_json"], {})
+            elements = content.get("elements") if isinstance(content, dict) else None
+            if not isinstance(elements, list):
+                continue
+            changed = False
+            for element in elements:
+                if not isinstance(element, dict) or element.get("instance_id") != "mascot-work-main":
+                    continue
+                element_config = element.get("config")
+                if not isinstance(element_config, dict):
+                    continue
+                # 同時符合舊預設才遷移；使用者改過任一欄位即保留原設定。
+                if element.get("refresh_interval") == 120 and element_config.get("interval_seconds") == 120:
+                    element["refresh_interval"] = 6
+                    element_config["interval_seconds"] = 6
+                    changed = True
+            if changed:
+                con.execute("UPDATE pages SET content_json=? WHERE id=?", (_json(content), row["id"]))
+                updated += 1
+        con.execute(
+            "INSERT INTO schema_metadata(key,value) VALUES(?,?)",
+            (_WORK_LAYOUT_MASCOT_INTERVAL_UPGRADE_KEY, str(updated)),
+        )
+        return updated
 
 
 def upgrade_default_refresh_policy() -> int:
@@ -492,11 +537,24 @@ def get_page(user_id: str, page_id: str) -> dict | None:
         return _public_page(row) if row else None
 
 
-def _validate_page_content(content: Any) -> dict:
+def _validate_page_content(content: Any, model_id: str) -> dict:
     if not isinstance(content, dict) or not isinstance(content.get("elements", []), list):
         raise ValueError("頁面內容必須包含 elements 陣列")
     if len(content["elements"]) > 100:
         raise ValueError("單一頁面最多 100 個元件")
+    resolution = _MODEL_RESOLUTIONS.get(model_id)
+    if resolution is None:
+        raise ValueError("頁面缺少可驗證的面板型號")
+    canvas_width, canvas_height = resolution
+    for index, element in enumerate(content["elements"], start=1):
+        if not isinstance(element, dict):
+            raise ValueError(f"第 {index} 個元件格式不正確")
+        values = {key: element.get(key) for key in ("x", "y", "w", "h")}
+        if any(type(value) is not int for value in values.values()):
+            raise ValueError(f"第 {index} 個元件的位置與尺寸必須是整數")
+        x, y, width, height = values["x"], values["y"], values["w"], values["h"]
+        if x < 0 or y < 0 or width < 1 or height < 1 or x + width > canvas_width or y + height > canvas_height:
+            raise ValueError(f"第 {index} 個元件超出 {canvas_width}×{canvas_height} 面板範圍")
     return content
 
 
@@ -505,7 +563,7 @@ def create_page(user_id: str, name: str, content: Any | None = None, model_id: s
         raise ValueError("頁面名稱必須為 1 至 100 個字元")
     if model_id not in MODEL_IDS:
         raise ValueError("建立頁面時必須選擇支援的面板型號")
-    identifier, content = str(uuid.uuid4()), _validate_page_content(content or {"elements": []})
+    identifier, content = str(uuid.uuid4()), _validate_page_content(content or {"elements": []}, model_id)
     with _db() as con:
         con.execute("INSERT INTO pages(id,user_id,name,template_id,content_json) VALUES(?,?,?,?,?)",
                     (identifier, user_id, name.strip(), f"model:{model_id}", _json(content)))
@@ -513,12 +571,15 @@ def create_page(user_id: str, name: str, content: Any | None = None, model_id: s
 
 
 def save_page(user_id: str, page_id: str, name: str, content: Any) -> dict | None:
-    content = _validate_page_content(content)
     if not isinstance(name, str) or not 1 <= len(name.strip()) <= 100:
         raise ValueError("頁面名稱必須為 1 至 100 個字元")
     with _db() as con:
-        if not con.execute("UPDATE pages SET name=?,content_json=? WHERE id=? AND user_id=?", (name.strip(), _json(content), page_id, user_id)).rowcount:
+        row = con.execute("SELECT * FROM pages WHERE id=? AND user_id=?", (page_id, user_id)).fetchone()
+        if not row:
             return None
+        model_id = _page_model_id(_public_page(row))
+        content = _validate_page_content(content, model_id)
+        con.execute("UPDATE pages SET name=?,content_json=? WHERE id=? AND user_id=?", (name.strip(), _json(content), page_id, user_id))
         return _public_page(con.execute("SELECT * FROM pages WHERE id=?", (page_id,)).fetchone())
 
 
