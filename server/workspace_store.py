@@ -25,6 +25,7 @@ _MIGRATION_KEY = "legacy_json_v1"
 _WORK_LAYOUT_UPGRADE_KEY = "waveshare_work_layout_v2"
 _WORK_LAYOUT_MASCOT_INTERVAL_UPGRADE_KEY = "waveshare_work_layout_mascot_interval_v3"
 _REFRESH_POLICY_UPGRADE_KEY = "waveshare_refresh_policy_v2"
+_OFF_WORK_LAYOUT_UPGRADE_KEY = "waveshare_off_work_greetings_v1"
 _ONLINE_AFTER_SECONDS = 180
 
 
@@ -266,6 +267,56 @@ def upgrade_default_mascot_interval() -> int:
         con.execute(
             "INSERT INTO schema_metadata(key,value) VALUES(?,?)",
             (_WORK_LAYOUT_MASCOT_INTERVAL_UPGRADE_KEY, str(updated)),
+        )
+        return updated
+
+
+def upgrade_default_off_work_layout() -> int:
+    """安全升級未修改過的 4.26 吋下班頁，加入可輪替的下班台詞。
+
+    只辨識舊版的精確預設文案，避免覆寫使用者已自行排版或改字的下班頁。
+    """
+    from .default_layouts import waveshare_off_work_layout
+
+    old_config = {
+        "title": "今天已登出人類模式",
+        "subtitle": "訊息明天再處理；現在只負責回家與放空。",
+    }
+    new_element = waveshare_off_work_layout()["elements"][0]
+    with _db() as con:
+        done = con.execute(
+            "SELECT 1 FROM schema_metadata WHERE key=?", (_OFF_WORK_LAYOUT_UPGRADE_KEY,)
+        ).fetchone()
+        if done:
+            return 0
+        rows = con.execute(
+            "SELECT id,content_json FROM pages WHERE legacy_id='waveshare426-01_off_work'"
+        ).fetchall()
+        updated = 0
+        for row in rows:
+            content = _parse_json(row["content_json"], {})
+            elements = content.get("elements") if isinstance(content, dict) else None
+            if not isinstance(elements, list):
+                continue
+            changed = False
+            for element in elements:
+                if not isinstance(element, dict):
+                    continue
+                if (
+                    element.get("instance_id") == "off-work-notice"
+                    and element.get("module_id") == "status_notice"
+                    and element.get("config") == old_config
+                ):
+                    element["refresh_interval"] = new_element["refresh_interval"]
+                    element["refresh_policy"] = new_element["refresh_policy"]
+                    element["config"] = new_element["config"]
+                    changed = True
+            if changed:
+                con.execute("UPDATE pages SET content_json=? WHERE id=?", (_json(content), row["id"]))
+                updated += 1
+        con.execute(
+            "INSERT INTO schema_metadata(key,value) VALUES(?,?)",
+            (_OFF_WORK_LAYOUT_UPGRADE_KEY, str(updated)),
         )
         return updated
 

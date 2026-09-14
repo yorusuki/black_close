@@ -288,11 +288,28 @@ function framesEditor(schema, item) {
   });
   root.append(complexButton("新增影格", () => updateComplex((config) => { (config[schema.key] ||= []).push({ art: "  (・ω・)\\n   |   |\\n  _| |_ ", line: "" }); }))); return root;
 }
+function messagesEditor(schema, item) {
+  const root = document.createElement("fieldset"); root.className = "complex-editor"; root.dataset.complex = "messages"; root.dataset.key = schema.key;
+  const legend = document.createElement("legend"); legend.textContent = schema.label; root.append(legend);
+  const messages = Array.isArray(item.config?.[schema.key]) ? item.config[schema.key] : (schema.default || []);
+  messages.forEach((text, index) => {
+    const card = document.createElement("section"); card.className = "message-card"; card.dataset.message = String(index);
+    const header = document.createElement("div"); header.className = "frame-card-header";
+    const title = document.createElement("strong"); title.textContent = `台詞 ${index + 1}`;
+    const remove = complexButton("移除這句", () => updateComplex((config) => { config[schema.key] = (config[schema.key] || []).filter((_, position) => position !== index); }));
+    header.append(title, remove);
+    const message = field("顯示文字", typeof text === "string" ? text : "", "textarea", { messageField: "text" }); message.classList.add("message-text-field");
+    card.append(header, message); root.append(card);
+  });
+  root.append(complexButton("新增台詞", () => updateComplex((config) => { (config[schema.key] ||= []).push("新的下班台詞"); })));
+  return root;
+}
 function complexEditor(schema, item) {
   if (schema.editor === "value_source") { const root = sourceEditor(item.config?.[schema.key] ?? schema.default); root.dataset.complex = "value_source"; root.dataset.key = schema.key; return root; }
   if (schema.editor === "footer_lines") return footerLinesEditor(schema, item);
   if (schema.editor === "rows") return rowsEditor(schema, item);
   if (schema.editor === "frames") return framesEditor(schema, item);
+  if (schema.editor === "messages") return messagesEditor(schema, item);
   const note = document.createElement("p"); note.className = "hint"; note.textContent = "此設定尚未提供專用表單，為避免覆蓋既有資料，暫時不在管理台修改。"; return note;
 }
 function collectModuleConfig(item) {
@@ -303,6 +320,7 @@ function collectModuleConfig(item) {
     if (root.dataset.complex === "footer_lines") item.config[key] = [...root.querySelectorAll("[data-line]")].map((line) => { const result = { big: line.querySelector('[data-line-field="big"]')?.checked, center: line.querySelector('[data-line-field="center"]')?.checked }; return line.querySelector("[data-line-mode]")?.value === "source" ? { ...result, value_source: readSource(line.querySelector(".source-editor")) } : { ...result, text: line.querySelector('[data-line-field="text"]')?.value || "" }; });
     if (root.dataset.complex === "rows") item.config[key] = [...root.querySelectorAll("[data-row]")].map((row) => ({ label: row.querySelector('[data-row-field="label"]')?.value || "", value_source: readSource(row.querySelector(".source-editor")), suffix: row.querySelector('[data-row-field="suffix"]')?.value || "", big: row.querySelector('[data-row-field="big"]')?.checked }));
     if (root.dataset.complex === "frames") item.config[key] = [...root.querySelectorAll("[data-frame]")].map((frame) => ({ art: frame.querySelector('[data-frame-field="art"]')?.value || "", line: frame.querySelector('[data-frame-field="line"]')?.value || "" }));
+    if (root.dataset.complex === "messages") item.config[key] = [...root.querySelectorAll("[data-message]")].map((message) => message.querySelector('[data-message-field="text"]')?.value || "").filter(Boolean);
   }
 }
 function renderInspector() {

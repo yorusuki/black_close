@@ -43,6 +43,36 @@ _WAVESHARE_WORK_LAYOUT = {
 }
 
 
+_WAVESHARE_OFF_WORK_LAYOUT = {
+    "elements": [
+        {
+            "instance_id": "off-work-notice", "module_id": "status_notice",
+            "x": 0, "y": 0, "w": 800, "h": 480, "z": 1, "refresh_interval": 60,
+            "refresh_policy": "partial",
+            "config": {
+                "title": "今天辛苦了",
+                "messages": [
+                    "今天的待辦，明天的我會處理。",
+                    "下班打卡完成，現在開始把腦袋還給自己。",
+                    "工作模式已收好，回家模式正在載入。",
+                    "通知先靜音，晚餐和休息優先。",
+                    "今天已盡力，剩下的留給明天。",
+                    "離開座位成功，今晚不談 KPI。",
+                    "下班不是逃跑，是正常結束營業。",
+                    "辛苦了，現在可以安心放空。",
+                ],
+                "interval_seconds": 60,
+            },
+        },
+    ],
+}
+
+
 def waveshare_work_layout() -> dict:
     """回傳可安全修改的新版 4.26 吋工作頁副本。"""
     return deepcopy(_WAVESHARE_WORK_LAYOUT)
+
+
+def waveshare_off_work_layout() -> dict:
+    """回傳 4.26 吋下班頁的可輪播預設版型副本。"""
+    return deepcopy(_WAVESHARE_OFF_WORK_LAYOUT)
