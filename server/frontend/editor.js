@@ -1,6 +1,6 @@
 "use strict";
 
-const state = { csrf: "", modules: [], devices: [], pages: [], rules: [], page: null, selected: null, assignment: null, refreshDeviceId: null, activeTab: "overview", layoutView: "canvas", drag: null, canvas: { width: 800, height: 480, scale: 1 } };
+const state = { csrf: "", modules: [], devices: [], pages: [], rules: [], page: null, savedContentSignature: null, selected: null, inspectorDirty: false, assignment: null, refreshDeviceId: null, activeTab: "overview", layoutView: "canvas", drag: null, canvas: { width: 800, height: 480, scale: 1 } };
 const el = (id) => document.getElementById(id);
 const clone = (value) => value === undefined ? null : JSON.parse(JSON.stringify(value));
 const modelLabel = { waveshare_4in26: "Waveshare 4.26 吋", inky_phat: "Pimoroni Inky pHAT", mock: "Mock 預覽裝置" };
@@ -181,6 +181,10 @@ function overflowFor(item) {
 function outOfBoundsElements() {
   return (state.page?.content?.elements || []).filter((item) => overflowFor(item));
 }
+function contentSignature(content) { return JSON.stringify(content || { elements: [] }); }
+function hasUnsavedContent() {
+  return Boolean(state.page) && state.savedContentSignature !== null && contentSignature(state.page.content) !== state.savedContentSignature;
+}
 function renderElementList() {
   // 選取狀態已直接呈現在畫布；此函式保留為畫布重繪的單一入口。
 }
@@ -302,7 +306,7 @@ function collectModuleConfig(item) {
   }
 }
 function renderInspector() {
-  const item = selectedElement(); el("element-form").hidden = !item; el("element-empty").hidden = Boolean(item); if (!item) return;
+  const item = selectedElement(); state.inspectorDirty = false; el("element-form").hidden = !item; el("element-empty").hidden = Boolean(item); if (!item) return;
   const module = moduleFor(item); el("selected-module-name").textContent = module ? `${module.display_name} · ${module.description}` : item.module_id;
   for (const [id, value] of [["el-x", item.x], ["el-y", item.y], ["el-w", item.w], ["el-h", item.h], ["el-z", item.z || 0], ["el-refresh", item.refresh_interval || 30]]) el(id).value = String(value);
   const fields = el("config-fields"); fields.replaceChildren();
@@ -343,16 +347,19 @@ function applyElement(event) {
   const [x, y, width, height, z, refresh] = values; if (x < 0 || y < 0 || width < 1 || height < 1 || refresh < 1) { notify("位置、尺寸與更新秒數不正確", true); return; }
   item.x = clamp(x, 0, state.canvas.width - width); item.y = clamp(y, 0, state.canvas.height - height); item.w = Math.min(width, state.canvas.width - item.x); item.h = Math.min(height, state.canvas.height - item.y); item.z = z; item.refresh_interval = refresh;
   collectModuleConfig(item);
+  state.inspectorDirty = false;
   renderPage(); notify("元件設定已套用，記得儲存");
 }
 
-async function loadPage(id) { state.page = await api(`/api/workspace/pages/${id}`); state.selected = null; renderPage(); updatePreview(); }
+async function loadPage(id) { state.page = await api(`/api/workspace/pages/${id}`); state.savedContentSignature = contentSignature(state.page.content); state.selected = null; renderPage(); updatePreview(); }
 async function savePage() {
-  if (!state.page) return; const invalid = outOfBoundsElements(); if (invalid.length) { switchLayoutView("canvas"); notify(`有 ${invalid.length} 個元件超出目前面板範圍，請先調整紅色元件。`, true); return; } try { const name = el("page-name").value.trim(); const page = await api(`/api/workspace/pages/${state.page.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, content: state.page.content }) }); state.page = page; await refresh(false); await loadDeviceAssignment(); renderPage(); updatePreview(); const activePageId = state.assignment?.active_page?.id; const assigned = state.assignment?.rules?.some((rule) => rule.page_id === state.page.id); notify(activePageId === state.page.id ? "版面已儲存；此 Pi 下次取得版面時會套用新內容" : assigned ? "版面已儲存；此頁面會在對應規則符合時套用" : "版面已儲存；尚未指派給目前這台 Pi"); } catch (error) { message(error); }
+  if (!state.page) return; const invalid = outOfBoundsElements(); if (invalid.length) { switchLayoutView("canvas"); notify(`有 ${invalid.length} 個元件超出目前面板範圍，請先調整紅色元件。`, true); return; } try { const name = el("page-name").value.trim(); const page = await api(`/api/workspace/pages/${state.page.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, content: state.page.content }) }); state.page = page; state.savedContentSignature = contentSignature(page.content); await refresh(false); await loadDeviceAssignment(); renderPage(); updatePreview(); const activePageId = state.assignment?.active_page?.id; const assigned = state.assignment?.rules?.some((rule) => rule.page_id === state.page.id); notify(activePageId === state.page.id ? "版面已儲存；此 Pi 下次取得版面時會套用新內容" : assigned ? "版面已儲存；此頁面會在對應規則符合時套用" : "版面已儲存；尚未指派給目前這台 Pi"); } catch (error) { message(error); }
 }
 function updatePreview() {
   const deviceId = editorDevice()?.id; const image = el("layout-preview"); const empty = el("preview-empty");
   if (!state.page || !deviceId || !pagesForDevice(editorDevice()).some((page) => page.id === state.page.id)) { image.hidden = true; empty.hidden = false; empty.textContent = "請選擇與目前 Pi 面板型號相符的頁面。"; return; }
+  if (state.inspectorDirty) { image.hidden = true; empty.hidden = false; empty.textContent = "元件設定尚未套用。請先按「套用設定」，再按「儲存版面」後更新預覽。"; return; }
+  if (hasUnsavedContent()) { image.hidden = true; empty.hidden = false; empty.textContent = "目前有未儲存的內容變更。請先按「儲存版面」，再更新預覽；預覽只會顯示 Server 已儲存、Pi 實際會取得的版本。"; return; }
   const invalid = outOfBoundsElements();
   if (invalid.length) { image.hidden = true; empty.hidden = false; empty.textContent = `有 ${invalid.length} 個元件超出面板範圍；請回到「編輯畫布」修正紅色元件後再預覽。`; return; }
   image.hidden = false; empty.hidden = true; image.src = `/api/workspace/devices/${encodeURIComponent(deviceId)}/preview?page_id=${encodeURIComponent(state.page.id)}&t=${Date.now()}`;
@@ -385,8 +392,8 @@ async function refresh(loadSelected = true) {
 function bindEvents() {
   document.querySelectorAll(".tab").forEach((tab) => tab.addEventListener("click", () => switchTab(tab.dataset.tab))); document.querySelectorAll("[data-open-tab]").forEach((button) => button.addEventListener("click", () => switchTab(button.dataset.openTab))); document.querySelectorAll("[data-layout-view]").forEach((tab) => tab.addEventListener("click", () => switchLayoutView(tab.dataset.layoutView)));
   el("device-form").onsubmit = async (event) => { event.preventDefault(); try { const result = await api("/api/workspace/devices", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: el("device-name").value, model_id: el("device-model").value }) }); el("device-name").value = ""; await refresh(); showToken(result.token); notify("設備已建立"); } catch (error) { message(error); } };
-  el("new-page").onclick = async () => { try { const device = editorDevice(); if (!device) throw new Error("請先選擇要建立版型的 Pi"); const page = await api("/api/workspace/pages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: el("new-page-name").value, model_id: device.model_id }) }); el("new-page-name").value = ""; state.page = page; await refresh(false); renderPage(); switchTab("layouts"); notify("新頁面已建立，僅可用於目前面板型號"); } catch (error) { message(error); } };
-  el("page-select").onchange = () => loadPage(el("page-select").value).catch(message); el("save-page").onclick = savePage; el("canvas-device").onchange = async () => { try { await loadDeviceAssignment(true); if (!state.assignment?.active_page) { const fallback = pagesForDevice(editorDevice())[0]; if (fallback) await loadPage(fallback.id); } renderPage(); } catch (error) { message(error); } }; el("rule-device").onchange = syncRulePageOptions; el("load-active-page").onclick = () => { const pageId = state.assignment?.active_page?.id; if (pageId) loadPage(pageId).catch(message); }; el("refresh-preview").onclick = updatePreview; el("element-form").onsubmit = applyElement;
+  el("new-page").onclick = async () => { try { const device = editorDevice(); if (!device) throw new Error("請先選擇要建立版型的 Pi"); const page = await api("/api/workspace/pages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: el("new-page-name").value, model_id: device.model_id }) }); el("new-page-name").value = ""; state.page = page; state.savedContentSignature = contentSignature(page.content); await refresh(false); renderPage(); switchTab("layouts"); notify("新頁面已建立，僅可用於目前面板型號"); } catch (error) { message(error); } };
+  el("page-select").onchange = () => loadPage(el("page-select").value).catch(message); el("save-page").onclick = savePage; el("canvas-device").onchange = async () => { try { await loadDeviceAssignment(true); if (!state.assignment?.active_page) { const fallback = pagesForDevice(editorDevice())[0]; if (fallback) await loadPage(fallback.id); } renderPage(); } catch (error) { message(error); } }; el("rule-device").onchange = syncRulePageOptions; el("load-active-page").onclick = () => { const pageId = state.assignment?.active_page?.id; if (pageId) loadPage(pageId).catch(message); }; el("refresh-preview").onclick = updatePreview; el("element-form").onsubmit = applyElement; el("element-form").addEventListener("input", () => { state.inspectorDirty = true; }); el("element-form").addEventListener("change", () => { state.inspectorDirty = true; });
   el("remove-element").onclick = () => { const item = selectedElement(); if (!item || !confirm("刪除此元件？")) return; state.page.content.elements = state.page.content.elements.filter((entry) => entry.instance_id !== item.instance_id); state.selected = null; renderPage(); notify("元件已刪除，記得儲存"); };
   el("rule-form").onsubmit = async (event) => { event.preventDefault(); try { await api("/api/workspace/rules", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: el("rule-name").value, device_id: el("rule-device").value, page_id: el("rule-page").value, priority: Number(el("rule-priority").value), start_time: el("rule-start").value || null, end_time: el("rule-end").value || null, attendance_status: el("rule-attendance").value || null, holiday: el("rule-holiday").value === "" ? null : el("rule-holiday").value === "true", weekdays: [...el("weekdays").querySelectorAll("input:checked")].map((box) => Number(box.value)) }) }); event.target.reset(); await refresh(); await loadDeviceAssignment(); notify("規則已新增，已重新判定目前套用頁面"); } catch (error) { message(error); } };
   el("asset-form").onsubmit = async (event) => { event.preventDefault(); try { const data = new FormData(); data.append("file", el("asset-file").files[0]); await api("/api/workspace/assets", { method: "POST", body: data }); event.target.reset(); await loadAssets(); notify("圖片已上傳"); } catch (error) { message(error); } };

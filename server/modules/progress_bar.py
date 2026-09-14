@@ -95,34 +95,59 @@ class ProgressBarModule(BaseModule):
         except (TypeError, ValueError):
             pass
 
-        pad = 8
-        y = pad
-        title_font = load_font(scaled_font_size(h * 0.13, cfg.get("title_scale", 100), minimum=11))
-        draw.text((pad, y), title, fill="black", font=title_font)
-        y += int(h * 0.20)
-
-        bar_h = int(h * 0.16)
-        draw_block_bar(draw, (pad, y), (w - pad * 2, bar_h), ratio, fg="black", bg="white")
-        value_font = load_font(scaled_font_size(h * 0.13, cfg.get("value_scale", 100), minimum=11))
         try:
             value_text = f"{float(value):g}{unit}"
         except (TypeError, ValueError):
             value_text = f"{value}{unit}"
-        draw.text((pad, y + bar_h + 4), value_text, fill="black", font=value_font)
-        y += bar_h + int(h * 0.22)
 
-        footer_lines = cfg.get("footer_lines", [])
+        footer_lines = [line for line in cfg.get("footer_lines", []) if isinstance(line, dict)]
         footer_network_values = data.get("footer_network_values", [])
+        footer_texts = []
         for i, line in enumerate(footer_lines):
             network_val = footer_network_values[i] if i < len(footer_network_values) else None
             fv = _resolve_for_render(line.get("value_source"), network_val, None) if "value_source" in line else None
-            text = str(fv) if fv is not None else line.get("text", "")
-            size_ratio = 0.22 if line.get("big") else 0.11
-            f = load_font(scaled_font_size(h * size_ratio, cfg.get("footer_scale", 100), minimum=10))
-            bbox = draw.textbbox((0, 0), text, font=f)
-            tw = bbox[2] - bbox[0]
-            x = (w - tw) / 2 if line.get("center", True) else pad
-            draw.text((x, y), text, fill="black", font=f)
-            y += int(h * size_ratio) + 4
+            footer_texts.append((str(fv) if fv is not None else str(line.get("text", "")), line))
+
+        # 所有文字、數值條與附註列都先量測。原本以固定 h 比例往下累加，
+        # 在附註列較多或字體放大時會越出元件；現在縮放至整組內容能裝進來。
+        pad = max(4, min(8, min(w, h) // 10))
+        available_height = max(1, h - pad * 2)
+        layout = None
+        for scale in (1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4):
+            title_font = load_font(max(8, round(scaled_font_size(h * 0.13, cfg.get("title_scale", 100), minimum=11) * scale)))
+            value_font = load_font(max(8, round(scaled_font_size(h * 0.13, cfg.get("value_scale", 100), minimum=11) * scale)))
+            footer_fonts = [load_font(max(8, round(scaled_font_size(
+                h * (0.22 if line.get("big") else 0.11), cfg.get("footer_scale", 100), minimum=10
+            ) * scale))) for _, line in footer_texts]
+            title_height = draw.textbbox((0, 0), str(title), font=title_font)[3]
+            value_height = draw.textbbox((0, 0), value_text, font=value_font)[3]
+            footer_heights = [draw.textbbox((0, 0), text, font=font)[3] for (text, _), font in zip(footer_texts, footer_fonts)]
+            gap = max(2, round(4 * scale))
+            bar_h = max(5, round(h * 0.16 * scale))
+            required = title_height + gap + bar_h + gap + value_height
+            if footer_heights:
+                required += gap + sum(footer_heights) + gap * (len(footer_heights) - 1)
+            layout = (title_font, value_font, footer_fonts, title_height, value_height, footer_heights, gap, bar_h)
+            if required <= available_height:
+                break
+
+        title_font, value_font, footer_fonts, title_height, value_height, footer_heights, gap, bar_h = layout
+        y = pad
+        draw.text((pad, y), title, fill="black", font=title_font)
+        y += title_height + gap
+        draw_block_bar(draw, (pad, y), (max(1, w - pad * 2), bar_h), ratio, fg="black", bg="white")
+        y += bar_h + gap
+        draw.text((pad, y), value_text, fill="black", font=value_font)
+        y += value_height
+
+        if footer_texts:
+            y += gap
+        for (text, line), font, text_height in zip(footer_texts, footer_fonts, footer_heights):
+            bbox = draw.textbbox((0, 0), text, font=font)
+            text_width = bbox[2] - bbox[0]
+            # 水平置中時也限制在自己的元件框內，避免長文字得到負 x 座標。
+            x = max(pad, (w - text_width) // 2) if line.get("center", True) else pad
+            draw.text((x, y), text, fill="black", font=font)
+            y += text_height + gap
 
         return img
