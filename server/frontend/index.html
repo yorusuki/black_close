@@ -1,123 +1,42 @@
 <!doctype html>
 <html lang="zh-Hant">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>epagerPi 排版編輯器</title>
-<link rel="stylesheet" href="style.css" />
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>epagerPi 管理台</title><link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header class="topbar">
-  <h1>epagerPi 排版編輯器</h1>
-  <div class="topbar-controls">
-    <label>裝置
-      <select id="device-select"></select>
-    </label>
-    <label>頁面
-      <select id="layout-select"></select>
-    </label>
-    <label title="保留給自訂頁面用；一般請從上方頁面選單切換">進階 Layout id
-      <input id="layout-id-input" type="text" />
-    </label>
-    <button id="load-layout-btn">載入</button>
-    <button id="save-layout-btn" class="primary">儲存</button>
-    <label>縮放
-      <input id="zoom-input" type="number" min="0.1" max="8" step="0.1" />
-    </label>
-    <button id="fit-zoom-btn" title="縮放到剛好塞進可視範圍，不會超出螢幕">符合視窗</button>
-    <span id="zoom-readout" class="hint"></span>
-    <span id="editor-status" class="editor-status" aria-live="polite">準備中</span>
-    <label title="拖曳/縮放元件時，x/y/w/h 自動貼齊格線">
-      <input id="snap-toggle" type="checkbox" checked /> 格線貼齊
-    </label>
-    <label>格線(px)
-      <input id="grid-size-input" type="number" min="1" max="64" value="4" />
-    </label>
-  </div>
-</header>
-
-<main class="layout">
-  <aside class="panel modules-panel">
-    <h2>模組面板</h2>
-    <p class="hint">點擊即可新增。選取元件後，在右側設定內容、刷新政策與尺寸。</p>
-    <div id="module-list"></div>
-  </aside>
-
-  <section class="canvas-wrap" id="canvas-wrap">
-    <div id="canvas-scale">
-      <div id="canvas"></div>
-    </div>
+<header class="topbar"><h1>epagerPi 管理台</h1><span id="identity"></span><button id="logout">登出</button></header>
+<main class="workspace">
+  <section class="card">
+    <h2>Pi 設定</h2>
+    <form id="device-form" class="form-row"><input id="device-name" required maxlength="100" placeholder="Pi 名稱">
+      <select id="device-model"><option value="waveshare_4in26">Waveshare 4.26 吋</option><option value="inky_phat">Pimoroni Inky pHAT</option><option value="mock">Mock</option></select>
+      <button>新增 Pi 並配發 token</button></form>
+    <p class="hint">Token 僅會在建立或重配發時顯示一次；隱藏的 Pi 無法讀取版面。</p><div id="device-list"></div>
   </section>
 
-  <aside class="panel props-panel">
-    <h2>元件屬性</h2>
-    <div id="props-empty" class="hint">點選畫布上的元件來編輯</div>
-    <form id="props-form" hidden>
-      <label>instance_id <input id="p-instance-id" type="text" disabled /></label>
-      <label>module <input id="p-module-id" type="text" disabled /></label>
-      <div class="row">
-        <label>x <input id="p-x" type="number" /></label>
-        <label>y <input id="p-y" type="number" /></label>
-      </div>
-      <div class="row">
-        <label>w <input id="p-w" type="number" /></label>
-        <label>h <input id="p-h" type="number" /></label>
-      </div>
-      <div class="row">
-        <label>z-index <input id="p-z" type="number" /></label>
-        <label>刷新間隔(秒) <input id="p-refresh" type="number" /></label>
-      </div>
-      <label>刷新政策
-        <select id="p-refresh-policy">
-          <option value="auto">自動（依裝置能力）</option>
-          <option value="partial">優先局刷</option>
-          <option value="full">變動時全刷</option>
-        </select>
-      </label>
-      <div id="config-fields" class="config-fields"></div>
-      <details class="advanced-config">
-        <summary>進階設定 JSON</summary>
-        <label>config（JSON）<textarea id="p-config" rows="10"></textarea></label>
-      </details>
-      <div class="row">
-        <button type="button" id="apply-props-btn" class="primary">套用</button>
-        <button type="button" id="delete-el-btn" class="danger">刪除元件</button>
-      </div>
-    </form>
+  <section class="card">
+    <h2>頁面建立器</h2>
+    <div class="form-row"><input id="new-page-name" maxlength="100" placeholder="新頁面名稱"><button id="new-page">新增頁面</button>
+      <select id="page-select"></select><button id="save-page">儲存頁面</button></div>
+    <div class="builder"><div><h3>元件</h3><select id="module-select"></select><button id="add-module">加入元件</button><div id="element-list"></div></div>
+      <form id="element-form" hidden><h3>元件屬性</h3><div class="grid-fields">
+        <label>x<input id="el-x" type="number" min="0"></label><label>y<input id="el-y" type="number" min="0"></label>
+        <label>寬<input id="el-w" type="number" min="1"></label><label>高<input id="el-h" type="number" min="1"></label>
+        <label>層級<input id="el-z" type="number"></label><label>刷新秒數<input id="el-refresh" type="number" min="1"></label></div>
+        <div id="config-fields"></div><button>套用元件</button><button id="remove-element" type="button" class="danger">刪除元件</button></form></div>
+    <p class="hint">頁面、元件與模組設定皆以欄位操作，管理畫面不提供 JSON 編輯。</p>
+  </section>
 
-    <section class="attendance-panel">
-      <h2>今日打卡與請假</h2>
-      <p id="attendance-summary" class="hint">讀取中…</p>
-      <div class="row">
-        <label>上班 <input id="attendance-clock-in" type="time" /></label>
-        <label>下班 <input id="attendance-clock-out" type="time" /></label>
-      </div>
-      <label class="check-label"><input id="attendance-on-leave" type="checkbox" /> 今日請假</label>
-      <label>請假說明（選填）<input id="attendance-leave-note" type="text" maxlength="80" placeholder="例如：特休" /></label>
-      <button type="button" id="save-attendance-btn" class="primary">儲存今日狀態</button>
-      <p class="hint">上下班皆填寫後，Pi 下次輪詢（預設最多 30 秒）會切至靜態下班頁；週末／假日也不會持續刷新。</p>
-    </section>
+  <section class="card"><h2>規則建立器</h2>
+    <form id="rule-form" class="grid-fields"><label>規則名稱<input id="rule-name" required maxlength="100"></label><label>Pi<select id="rule-device"></select></label>
+      <label>頁面<select id="rule-page"></select></label><label>優先序<input id="rule-priority" type="number" value="0"></label>
+      <label>開始時間<input id="rule-start" type="time"></label><label>結束時間<input id="rule-end" type="time"></label>
+      <label>出勤狀態<select id="rule-attendance"><option value="">不限</option><option value="pending">未打卡</option><option value="working">上班中</option><option value="off_work">已下班</option><option value="leave">請假</option></select></label>
+      <label>假日<select id="rule-holiday"><option value="">不限</option><option value="true">是</option><option value="false">否</option></select></label>
+      <fieldset id="weekdays"><legend>星期</legend><label><input type="checkbox" value="0">一</label><label><input type="checkbox" value="1">二</label><label><input type="checkbox" value="2">三</label><label><input type="checkbox" value="3">四</label><label><input type="checkbox" value="4">五</label><label><input type="checkbox" value="5">六</label><label><input type="checkbox" value="6">日</label></fieldset><button>新增規則</button></form><div id="rule-list"></div>
+  </section>
 
-    <h2>圖片素材庫</h2>
-    <p class="hint">上傳圖片後，點縮圖套用到「目前選取的圖片元件」（要先加一個「圖片」模組元件並選取它）。</p>
-    <div class="asset-upload-row">
-      <input id="asset-file-input" type="file" accept="image/*" />
-      <button id="asset-upload-btn">上傳</button>
-    </div>
-    <div id="asset-list" class="asset-list"></div>
-
-    <h2>即時預覽</h2>
-    <p class="hint">每 3 秒重新讀取實際合成畫面（含量化後的色彩/灰階），可以看到吉祥物動畫。</p>
-    <img id="preview-img" alt="裝置畫面預覽" />
-    <div id="preview-meta" class="hint"></div>
-
-    <h2>進階情境設定（JSON）</h2>
-    <p class="hint">condition 支援 weekdays([0-6], Mon=0)、time_range(["HH:MM","HH:MM"])、is_holiday(true/false)。多筆符合時取 priority 最大者。</p>
-    <textarea id="scenes-json" rows="10"></textarea>
-    <button id="save-scenes-btn">儲存情境設定</button>
-  </aside>
-</main>
-
-<script src="editor.js"></script>
-</body>
-</html>
+  <section class="card"><h2>素材與出勤</h2><form id="asset-form"><input id="asset-file" type="file" accept="image/png,image/jpeg,image/gif,image/bmp,image/webp" required><button>上傳圖片</button></form><div id="asset-list"></div>
+    <form id="attendance-form" class="form-row"><label>上班<input id="clock-in" type="time"></label><label>下班<input id="clock-out" type="time"></label><label><input id="on-leave" type="checkbox"> 請假</label><input id="leave-note" maxlength="80" placeholder="請假說明"><button>儲存出勤</button></form><p id="attendance-status" class="hint"></p></section>
+</main><script src="editor.js"></script></body></html>

@@ -12,9 +12,12 @@ EPAGERPI_DATA_DIR（各自的 repo 根目錄），所以路徑規則自動對齊
 from __future__ import annotations
 
 import hashlib
+import io
 import time
 import uuid
 from pathlib import Path
+
+from PIL import Image, UnidentifiedImageError
 
 from . import config, store
 
@@ -51,6 +54,16 @@ def asset_file_path(asset: dict) -> Path:
 def save_asset(original_filename: str, content: bytes) -> dict:
     """存一個新素材。回傳的 record 會被寫進 assets.json 索引。"""
     ext = Path(original_filename).suffix.lower() or ".bin"
+    allowed = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
+    if ext not in allowed:
+        raise ValueError("只允許 PNG、JPG、GIF、BMP 或 WebP 圖片")
+    if not 0 < len(content) <= 10 * 1024 * 1024:
+        raise ValueError("素材檔案大小必須介於 1B 與 10MB")
+    try:
+        with Image.open(io.BytesIO(content)) as image:
+            image.verify()
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        raise ValueError("上傳內容不是有效圖片") from exc
     digest = hashlib.sha256(content).hexdigest()[:12]
     asset_id = uuid.uuid4().hex[:12]
     filename = f"{asset_id}_{digest}{ext}"

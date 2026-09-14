@@ -25,7 +25,10 @@ def upload_asset():
     content = file.read()
     if not content:
         return jsonify({"error": "檔案是空的"}), 400
-    record = assets.save_asset(file.filename or "upload.bin", content)
+    try:
+        record = assets.save_asset(file.filename or "upload.bin", content)
+    except ValueError as exc:
+        return jsonify({"error": "invalid_asset", "message": str(exc)}), 400
     return jsonify(record), 201
 
 

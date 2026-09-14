@@ -61,6 +61,11 @@ def _attendance_layout(device_id: str, now: datetime.datetime, holiday: bool) ->
         return "今日請假", cfg.get("leave_layout_id")
     if snapshot["status"] == "off_work":
         return "今日下班", cfg.get("off_work_layout_id")
+    # Network and attendance-sync failures must not leave an e-paper display on
+    # its work page indefinitely. This is deliberately local time logic: it
+    # works on an offline Pi as long as it has its checked-out scene/layout data.
+    if now.time() >= config.AUTO_OFF_WORK_TIME:
+        return "本機下班時間", cfg.get("off_work_layout_id")
     if now.time() >= datetime.time(8, 0):
         return "今日上班", cfg.get("work_layout_id")
     return None

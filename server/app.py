@@ -10,7 +10,7 @@ from pathlib import Path
 
 from flask import Flask, send_from_directory
 
-from . import auth, config
+from . import auth, config, workspace_store
 from .api import BLUEPRINTS
 
 FRONTEND_DIR = Path(__file__).resolve().parent / "frontend"
@@ -20,10 +20,17 @@ def create_app() -> Flask:
     config.ensure_dirs()
     app = Flask(__name__)
 
+    workspace_store.init()
+    workspace_store.migrate_legacy_json()
+
     for bp in BLUEPRINTS:
         app.register_blueprint(bp)
 
     auth.init_app(app)
+
+    app.add_url_rule("/auth/line/start", "line_start", auth.line_start)
+    app.add_url_rule(config.LINE_CALLBACK_PATH, "line_callback", auth.line_callback)
+    app.add_url_rule("/auth/logout", "logout", auth.logout, methods=["POST"])
 
     @app.get("/healthz")
     def healthz():

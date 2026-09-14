@@ -1,0 +1,16 @@
+[Unit]
+Description=epagerPi split-mode device agent (local rendering and e-paper refresh)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/epagerPi
+Environment=PYTHONPATH=/home/pi/epagerPi
+ExecStart=/usr/bin/python3 -m device_agent.agent
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

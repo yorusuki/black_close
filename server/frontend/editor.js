@@ -1,700 +1,96 @@
 "use strict";
-/* epagerPi 排版編輯器：純 vanilla JS，不依賴任何外部 CDN 套件
- * （Pi 上可能沒有網路，編輯器本身也要能離線用）。
- *
- * 核心概念：#canvas 這個 DOM 元素的實際尺寸永遠等於「裝置真實像素解析度」
- * （2.13" pHAT 是 212x104，4.26" 微雪是 800x480，兩者各自照自己的實際輸出範圍），
- * 畫布上每個元件的 x/y/w/h 也都直接用裝置真實像素存放、直接當成 CSS px 套用，
- * 完全不用乘 zoom；「縮放」這件事整個交給 #canvas 本身的 CSS transform: scale()，
- * 所以存進 layout 的座標永遠是實際像素，跟編輯器目前開多大縮放無關，畫面上看起來
- * 多大純粹是視覺呈現問題。
- *
- * 切換裝置或視窗大小改變時，會自動算一個「符合可視範圍」的縮放倍率（放大很小的
- * 2.13" 畫面方便編輯、縮小較大的 4.26" 畫面避免超出螢幕），使用者手動改縮放輸入框
- * 之後就不會再自動覆蓋，除非按「符合視窗」。
- *
- * 格線貼齊：拖曳/縮放元件時，x/y/w/h 會貼齊 state.gridSize 這個固定間距（單位是裝置
- * 實際像素，不受縮放倍率影響）。存進 layout 的座標格式完全沒變，仍然是實際像素整數，
- * 格線只影響「拖曳時怎麼取整數」。縮放不能小於 MIN_ELEMENT_W/MIN_ELEMENT_H，避免
- * 拖出太細碎、對不齊的區塊。
- */
 
-const MIN_ELEMENT_W = 16;
-const MIN_ELEMENT_H = 16;
-
-const state = {
-  devices: [],
-  modules: [],
-  deviceId: null,
-  profile: null,
-  layoutId: null,
-  layout: { elements: [] },
-  selectedId: null,
-  zoom: 1,
-  autoFit: true,
-  snapEnabled: true,
-  gridSize: 4,
-  assets: [],
-  layoutIds: [],
-  attendance: null,
-};
-
+const state = { csrf: "", modules: [], devices: [], pages: [], rules: [], page: null, selected: null };
 const el = (id) => document.getElementById(id);
 
-async function api(path, opts) {
-  const resp = await fetch(path, opts);
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => resp.statusText);
-    throw new Error(`${path} -> ${resp.status}: ${text}`);
-  }
-  const ct = resp.headers.get("content-type") || "";
-  return ct.includes("application/json") ? resp.json() : resp.text();
+async function api(path, options = {}) {
+  const headers = new Headers(options.headers || {});
+  if (options.method && !["GET", "HEAD"].includes(options.method)) headers.set("X-CSRF-Token", state.csrf);
+  const response = await fetch(path, { ...options, headers });
+  if (!response.ok) throw new Error((await response.text()) || response.statusText);
+  return response.status === 204 ? null : response.json();
+}
+function option(select, values, label) { select.replaceChildren(...values.map((value) => Object.assign(document.createElement("option"), { value: value.id, textContent: label(value) }))); }
+function message(error) { alert(error instanceof Error ? error.message : String(error)); }
+
+async function refresh() {
+  [state.devices, state.pages, state.rules] = await Promise.all([api("/api/workspace/devices"), api("/api/workspace/pages"), api("/api/workspace/rules")]);
+  option(el("page-select"), state.pages, (page) => page.name);
+  option(el("rule-page"), state.pages, (page) => page.name);
+  option(el("rule-device"), state.devices.filter((device) => !device.hidden), (device) => `${device.name} (${device.model_id})`);
+  renderDevices(); renderRules();
+  if (state.page) {
+    const current = state.pages.find((page) => page.id === state.page.id);
+    if (current) await loadPage(current.id);
+  } else if (state.pages[0]) await loadPage(state.pages[0].id);
 }
 
-// ---------------- 初始化 ----------------
+function renderDevices() {
+  el("device-list").replaceChildren(...state.devices.map((device) => {
+    const row = document.createElement("div"); row.className = "list-row";
+    row.append(`${device.name} · ${device.model_id}${device.hidden ? "（已隱藏）" : ""}`);
+    const hide = document.createElement("button"); hide.textContent = device.hidden ? "顯示" : "隱藏";
+    hide.onclick = async () => { try { await api(`/api/workspace/devices/${device.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ hidden: !device.hidden }) }); await refresh(); } catch (error) { message(error); } };
+    const rotate = document.createElement("button"); rotate.textContent = "重配發 token";
+    rotate.onclick = async () => { if (!confirm("重配發後，舊 token 會立即失效。")) return; try { const result = await api(`/api/workspace/devices/${device.id}/token`, { method: "POST" }); prompt("請立即複製並安全保存此 token（僅顯示這一次）", result.token); } catch (error) { message(error); } };
+    row.append(hide, rotate); return row;
+  }));
+}
+
+async function loadPage(id) {
+  state.page = await api(`/api/workspace/pages/${id}`); state.selected = null; el("page-select").value = id; renderPage();
+}
+function currentElement() { return state.page?.content.elements.find((item) => item.instance_id === state.selected); }
+function renderPage() {
+  const list = el("element-list"); list.replaceChildren();
+  for (const item of state.page?.content.elements || []) {
+    const button = document.createElement("button"); button.className = item.instance_id === state.selected ? "selected" : "";
+    button.textContent = `${item.module_id} (${item.x}, ${item.y})`; button.onclick = () => { state.selected = item.instance_id; renderPage(); fillElement(); }; list.append(button);
+  }
+  el("element-form").hidden = !currentElement(); if (currentElement()) fillElement();
+}
+function fillElement() {
+  const item = currentElement(); if (!item) return;
+  for (const [id, value] of [["el-x", item.x], ["el-y", item.y], ["el-w", item.w], ["el-h", item.h], ["el-z", item.z || 0], ["el-refresh", item.refresh_interval || 30]]) el(id).value = value;
+  const fields = el("config-fields"); fields.replaceChildren(); const module = state.modules.find((candidate) => candidate.module_id === item.module_id);
+  for (const schema of module?.config_schema || []) {
+    const label = document.createElement("label"); label.textContent = schema.label || schema.key;
+    if (schema.type === "json") { const note = document.createElement("p"); note.className = "hint"; note.textContent = "此複合設定沿用頁面預設值；目前不提供原始 JSON 編輯。"; label.append(note); fields.append(label); continue; }
+    const input = document.createElement("input"); input.type = schema.type === "number" ? "number" : "text"; input.dataset.key = schema.key; input.dataset.type = schema.type || "text"; input.value = item.config?.[schema.key] ?? schema.default ?? ""; label.append(input); fields.append(label);
+  }
+}
+function addModule() {
+  if (!state.page) return; const module = state.modules.find((item) => item.module_id === el("module-select").value); if (!module) return;
+  const index = state.page.content.elements.length, [w, h] = module.default_size;
+  state.page.content.elements.push({ instance_id: `${module.module_id}-${crypto.randomUUID()}`, module_id: module.module_id, x: 0, y: 0, w, h, z: index, refresh_interval: module.min_refresh_interval, refresh_policy: module.refresh_policy, config: Object.fromEntries((module.config_schema || []).map((field) => [field.key, field.default])) });
+  state.selected = state.page.content.elements.at(-1).instance_id; renderPage();
+}
+function applyElement(event) {
+  event.preventDefault(); const item = currentElement(); if (!item) return;
+  item.x = Number(el("el-x").value); item.y = Number(el("el-y").value); item.w = Number(el("el-w").value); item.h = Number(el("el-h").value); item.z = Number(el("el-z").value); item.refresh_interval = Number(el("el-refresh").value);
+  item.config ||= {}; for (const input of el("config-fields").querySelectorAll("[data-key]")) item.config[input.dataset.key] = input.dataset.type === "number" ? Number(input.value) : input.value;
+  renderPage();
+}
+
+function renderRules() {
+  el("rule-list").replaceChildren(...state.rules.map((rule) => { const row = document.createElement("div"); row.className = "list-row"; const days = rule.weekdays.length ? rule.weekdays.map((day) => "一二三四五六日"[day]).join("") : "每天"; row.append(`${rule.name} · 優先 ${rule.priority} · ${days}`); const remove = document.createElement("button"); remove.textContent = "刪除"; remove.className = "danger"; remove.onclick = async () => { try { await api(`/api/workspace/rules/${rule.id}`, { method: "DELETE" }); await refresh(); } catch (error) { message(error); } }; row.append(remove); return row; }));
+}
+
+async function loadAssets() { const assets = await api("/api/workspace/assets"); el("asset-list").replaceChildren(...assets.map((asset) => { const image = document.createElement("img"); image.className = "asset"; image.src = `/api/workspace/assets/${asset.id}`; image.alt = asset.original_filename; return image; })); }
+async function loadAttendance() { const attendance = await api("/api/workspace/attendance/today"); el("clock-in").value = attendance.clock_in || ""; el("clock-out").value = attendance.clock_out || ""; el("on-leave").checked = attendance.on_leave; el("leave-note").value = attendance.leave_note; el("attendance-status").textContent = `${attendance.date}：${attendance.status}`; }
 
 async function init() {
-  state.modules = await api("/api/modules");
-  renderModuleList();
-  await loadLayoutIds();
-
-  state.devices = await api("/api/devices");
-  const sel = el("device-select");
-  sel.innerHTML = state.devices.map((d) => `<option value="${d.id}">${d.id}（${d.driver}）</option>`).join("");
-  sel.addEventListener("change", () => selectDevice(sel.value));
-  el("layout-select").addEventListener("change", () => {
-    const layoutId = el("layout-select").value;
-    el("layout-id-input").value = layoutId;
-    loadLayout(layoutId);
-  });
-
-  el("zoom-input").addEventListener("change", (e) => {
-    // 使用者自己打縮放值 = 手動接管，之後視窗改變大小不會再自動幫他改掉。
-    state.autoFit = false;
-    state.zoom = Math.max(0.1, parseFloat(e.target.value) || 1);
-    renderCanvas();
-  });
-  el("fit-zoom-btn").addEventListener("click", () => {
-    state.autoFit = true;
-    applyFitZoom();
-  });
-  el("load-layout-btn").addEventListener("click", () => loadLayout(el("layout-id-input").value.trim()));
-  el("save-layout-btn").addEventListener("click", saveLayout);
-  el("apply-props-btn").addEventListener("click", applyProps);
-  el("delete-el-btn").addEventListener("click", deleteSelected);
-  el("save-scenes-btn").addEventListener("click", saveScenes);
-  el("save-attendance-btn").addEventListener("click", saveAttendance);
-  el("attendance-on-leave").addEventListener("change", updateAttendanceFormState);
-
-  el("snap-toggle").addEventListener("change", (e) => {
-    state.snapEnabled = e.target.checked;
-    renderCanvas();
-  });
-  el("grid-size-input").addEventListener("change", (e) => {
-    state.gridSize = Math.max(1, parseInt(e.target.value, 10) || 4);
-    renderCanvas();
-  });
-  el("asset-upload-btn").addEventListener("click", uploadSelectedAsset);
-
-  let resizeTimer = null;
-  window.addEventListener("resize", () => {
-    // 視窗大小改變時，只有在使用者還沒手動接管縮放的情況下才重新符合視窗，
-    // debounce 一下避免拖動視窗邊框時瘋狂重算。
-    if (!state.autoFit) return;
-    clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(applyFitZoom, 150);
-  });
-
-  if (state.devices.length) {
-    sel.value = state.devices[0].id;
-    await selectDevice(state.devices[0].id);
-  }
-
-  await loadAssets();
-  await loadAttendance();
-  startPreviewLoop();
+  const me = await api("/api/workspace/me"); state.csrf = me.csrf_token; el("identity").textContent = `${me.display_name}（${me.role}）`;
+  state.modules = await api("/api/modules"); option(el("module-select"), state.modules, (module) => module.display_name);
+  el("device-form").onsubmit = async (event) => { event.preventDefault(); try { const result = await api("/api/workspace/devices", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: el("device-name").value, model_id: el("device-model").value }) }); el("device-name").value = ""; prompt("請立即複製並安全保存此 token（僅顯示這一次）", result.token); await refresh(); } catch (error) { message(error); } };
+  el("new-page").onclick = async () => { try { const page = await api("/api/workspace/pages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: el("new-page-name").value }) }); el("new-page-name").value = ""; await refresh(); await loadPage(page.id); } catch (error) { message(error); } };
+  el("page-select").onchange = () => loadPage(el("page-select").value); el("add-module").onclick = addModule;
+  el("element-form").onsubmit = applyElement; el("remove-element").onclick = () => { state.page.content.elements = state.page.content.elements.filter((item) => item.instance_id !== state.selected); state.selected = null; renderPage(); };
+  el("save-page").onclick = async () => { if (!state.page) return; try { await api(`/api/workspace/pages/${state.page.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: state.page.name, content: state.page.content }) }); await refresh(); } catch (error) { message(error); } };
+  el("rule-form").onsubmit = async (event) => { event.preventDefault(); try { await api("/api/workspace/rules", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: el("rule-name").value, device_id: el("rule-device").value, page_id: el("rule-page").value, priority: Number(el("rule-priority").value), start_time: el("rule-start").value || null, end_time: el("rule-end").value || null, attendance_status: el("rule-attendance").value || null, holiday: el("rule-holiday").value === "" ? null : el("rule-holiday").value === "true", weekdays: [...el("weekdays").querySelectorAll("input:checked")].map((box) => Number(box.value)) }) }); event.target.reset(); await refresh(); } catch (error) { message(error); } };
+  el("asset-form").onsubmit = async (event) => { event.preventDefault(); try { const data = new FormData(); data.append("file", el("asset-file").files[0]); await api("/api/workspace/assets", { method: "POST", body: data }); event.target.reset(); await loadAssets(); } catch (error) { message(error); } };
+  el("attendance-form").onsubmit = async (event) => { event.preventDefault(); try { await api("/api/workspace/attendance/today", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clock_in: el("clock-in").value || null, clock_out: el("clock-out").value || null, on_leave: el("on-leave").checked, leave_note: el("leave-note").value }) }); await loadAttendance(); } catch (error) { message(error); } };
+  el("logout").onclick = async () => { await api("/auth/logout", { method: "POST" }); location.reload(); };
+  await refresh(); await Promise.all([loadAssets(), loadAttendance()]);
 }
-
-function setEditorStatus(message, kind = "") {
-  const node = el("editor-status");
-  node.textContent = message;
-  node.className = `editor-status ${kind}`;
-}
-
-async function selectDevice(deviceId) {
-  state.deviceId = deviceId;
-  state.profile = await api(`/api/devices/${deviceId}`);
-  const layoutId = state.profile.default_layout_id || "";
-  el("layout-id-input").value = layoutId;
-  await loadLayout(layoutId);
-  await loadScenes(deviceId);
-  el("preview-img").src = `/api/devices/${deviceId}/frame.png?t=${Date.now()}`;
-  // 每個裝置的實際輸出解析度差很多（212x104 vs 800x480），切換裝置一律重新符合視窗，
-  // 不然沿用上一個裝置的縮放倍率很容易一個爆版一個看不清楚。
-  state.autoFit = true;
-  applyFitZoom();
-  setEditorStatus(`已載入裝置 ${deviceId}`, "ok");
-}
-
-async function loadLayoutIds() {
-  state.layoutIds = await api("/api/layouts");
-  const select = el("layout-select");
-  select.replaceChildren();
-  for (const layoutId of state.layoutIds) {
-    const option = document.createElement("option");
-    option.value = layoutId;
-    option.textContent = friendlyLayoutName(layoutId);
-    select.appendChild(option);
-  }
-}
-
-function friendlyLayoutName(layoutId) {
-  const names = {
-    "waveshare426-01_dashboard": "工作中（打卡／請假）",
-    "waveshare426-01_off_work": "已下班（靜態全頁）",
-    "waveshare426-01_rest": "週末／假日（今日休假 Zzz）",
-    "waveshare426-01_leave": "請假（靜態全頁）",
-  };
-  return names[layoutId] || layoutId;
-}
-
-// ---------------- 縮放：符合可視範圍，不超出螢幕 ----------------
-
-function computeAvailableCanvasArea() {
-  const wrap = el("canvas-wrap");
-  const topbar = document.querySelector(".topbar");
-  const rect = wrap.getBoundingClientRect();
-  const style = getComputedStyle(wrap);
-  const padX = parseFloat(style.paddingLeft || "0") + parseFloat(style.paddingRight || "0");
-  const padY = parseFloat(style.paddingTop || "0") + parseFloat(style.paddingBottom || "0");
-  const topbarH = topbar ? topbar.getBoundingClientRect().height : 0;
-
-  // wrap 目前的高度可能還沒被 CSS 的 max-height 限制生效（例如畫面還沒重排），
-  // 保守一點直接用「視窗高度 - topbar - 一點邊界」當高度上限，避免算出超出螢幕的結果。
-  const availW = Math.max(100, rect.width - padX - 6);
-  const availH = Math.max(100, window.innerHeight - topbarH - padY - 40);
-  return { w: availW, h: availH };
-}
-
-function computeFitZoom() {
-  if (!state.profile) return 1;
-  const [devW, devH] = state.profile.resolution;
-  const { w: availW, h: availH } = computeAvailableCanvasArea();
-  let zoom = Math.min(availW / devW, availH / devH);
-  zoom = Math.max(0.1, Math.min(8, zoom));
-  return Math.round(zoom * 100) / 100;
-}
-
-function applyFitZoom() {
-  state.zoom = computeFitZoom();
-  el("zoom-input").value = state.zoom;
-  renderCanvas();
-}
-
-function updateZoomReadout() {
-  const pct = Math.round(state.zoom * 100);
-  el("zoom-readout").textContent = `${pct}%${state.autoFit ? "（已符合視窗）" : "（手動）"}`;
-}
-
-// ---------------- 格線貼齊 ----------------
-
-function snapVal(v) {
-  if (!state.snapEnabled) return Math.round(v);
-  const g = state.gridSize || 1;
-  return Math.round(v / g) * g;
-}
-
-function applyGridBackground(canvas) {
-  if (!state.snapEnabled) {
-    canvas.style.backgroundImage = "none";
-    return;
-  }
-  const g = state.gridSize || 4;
-  canvas.style.backgroundImage =
-    "linear-gradient(to right, rgba(0,0,0,.07) 1px, transparent 1px)," +
-    "linear-gradient(to bottom, rgba(0,0,0,.07) 1px, transparent 1px)";
-  canvas.style.backgroundSize = `${g}px ${g}px`;
-}
-
-// ---------------- 模組面板 ----------------
-
-function renderModuleList() {
-  const list = el("module-list");
-  list.replaceChildren();
-  for (const module of state.modules) {
-    const item = document.createElement("button");
-    item.type = "button";
-    item.className = "module-item";
-    const title = document.createElement("b");
-    title.textContent = module.display_name;
-    const description = document.createElement("span");
-    description.textContent = module.description || "";
-    item.append(title, description);
-    item.addEventListener("click", () => addElement(module.module_id));
-    list.appendChild(item);
-  }
-}
-
-function defaultConfigFromSchema(manifest) {
-  const cfg = {};
-  for (const field of manifest.config_schema || []) {
-    cfg[field.key] = field.default;
-  }
-  return cfg;
-}
-
-function addElement(moduleId) {
-  const manifest = state.modules.find((m) => m.module_id === moduleId);
-  if (!manifest) return;
-  const instanceId = `${moduleId}-${Date.now().toString(36)}`;
-  state.layout.elements.push({
-    instance_id: instanceId,
-    module_id: moduleId,
-    x: 10,
-    y: 10,
-    w: manifest.default_size[0],
-    h: manifest.default_size[1],
-    z: state.layout.elements.length,
-    refresh_interval: manifest.min_refresh_interval,
-    refresh_policy: manifest.refresh_policy || "auto",
-    config: defaultConfigFromSchema(manifest),
-  });
-  renderCanvas();
-  selectElement(instanceId);
-}
-
-// ---------------- Layout 讀寫 ----------------
-
-async function loadLayout(layoutId) {
-  state.layoutId = layoutId;
-  if (!layoutId) {
-    state.layout = { elements: [] };
-    renderCanvas();
-    return;
-  }
-  try {
-    state.layout = await api(`/api/layouts/${layoutId}`);
-    if (!state.layout.elements) state.layout.elements = [];
-  } catch (e) {
-    console.warn("layout 不存在，建立空白 layout：", e.message);
-    state.layout = { elements: [] };
-  }
-  el("layout-select").value = layoutId;
-  setEditorStatus(`正在編輯：${friendlyLayoutName(layoutId)}`);
-  renderCanvas();
-}
-
-async function saveLayout() {
-  const layoutId = el("layout-id-input").value.trim();
-  if (!layoutId) {
-    alert("請先填 layout id");
-    return;
-  }
-  state.layoutId = layoutId;
-  await api(`/api/layouts/${layoutId}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(state.layout),
-  });
-  if (!state.layoutIds.includes(layoutId)) await loadLayoutIds();
-  el("layout-select").value = layoutId;
-  setEditorStatus(`已儲存：${friendlyLayoutName(layoutId)}`, "ok");
-}
-
-// ---------------- 畫布渲染 / 拖曳縮放 ----------------
-
-function renderCanvas() {
-  const canvas = el("canvas");
-  const canvasScale = el("canvas-scale");
-  if (!state.profile) return;
-  const [w, h] = state.profile.resolution;
-  const z = state.zoom;
-
-  // #canvas 本身永遠是裝置的實際像素尺寸（畫布尺寸照實際尺寸），縮放完全交給 transform；
-  // #canvas-scale 這個外層容器要另外撐出「縮放後的視覺尺寸」，滾動/版面計算才會正確，
-  // 不然 transform 不影響版面尺寸，容器還是會維持未縮放前的大小。
-  canvas.style.width = `${w}px`;
-  canvas.style.height = `${h}px`;
-  canvas.style.transform = `scale(${z})`;
-  canvasScale.style.width = `${w * z}px`;
-  canvasScale.style.height = `${h * z}px`;
-  canvas.innerHTML = "";
-  applyGridBackground(canvas);
-
-  const elements = [...state.layout.elements].sort((a, b) => (a.z || 0) - (b.z || 0));
-  for (const item of elements) {
-    const div = document.createElement("div");
-    div.className = "el" + (item.instance_id === state.selectedId ? " selected" : "");
-    div.style.left = `${item.x}px`;
-    div.style.top = `${item.y}px`;
-    div.style.width = `${item.w}px`;
-    div.style.height = `${item.h}px`;
-    div.style.zIndex = String(item.z || 0);
-    const label = document.createElement("span");
-    label.className = "el-label";
-    label.textContent = item.module_id;
-    div.appendChild(label);
-
-    const handle = document.createElement("div");
-    handle.className = "resize-handle";
-    // 抵銷外層 #canvas 的 scale(z)，讓縮放手把在任何縮放倍率下視覺大小都一樣好抓。
-    handle.style.transform = `scale(${1 / z})`;
-    div.appendChild(handle);
-
-    div.addEventListener("pointerdown", (evt) => {
-      if (evt.target === handle) return;
-      selectElement(item.instance_id);
-      startDrag(evt, item);
-    });
-    handle.addEventListener("pointerdown", (evt) => {
-      evt.stopPropagation();
-      selectElement(item.instance_id);
-      startResize(evt, item);
-    });
-
-    canvas.appendChild(div);
-  }
-
-  updateZoomReadout();
-}
-
-function startDrag(evt, item) {
-  evt.preventDefault();
-  const startX = evt.clientX;
-  const startY = evt.clientY;
-  const origX = item.x;
-  const origY = item.y;
-  const z = state.zoom;
-
-  function onMove(e) {
-    item.x = Math.max(0, snapVal(origX + (e.clientX - startX) / z));
-    item.y = Math.max(0, snapVal(origY + (e.clientY - startY) / z));
-    renderCanvas();
-  }
-  function onUp() {
-    window.removeEventListener("pointermove", onMove);
-    window.removeEventListener("pointerup", onUp);
-    if (state.selectedId === item.instance_id) fillPropsForm(item);
-  }
-  window.addEventListener("pointermove", onMove);
-  window.addEventListener("pointerup", onUp);
-}
-
-function startResize(evt, item) {
-  evt.preventDefault();
-  const startX = evt.clientX;
-  const startY = evt.clientY;
-  const origW = item.w;
-  const origH = item.h;
-  const z = state.zoom;
-
-  function onMove(e) {
-    item.w = Math.max(MIN_ELEMENT_W, snapVal(origW + (e.clientX - startX) / z));
-    item.h = Math.max(MIN_ELEMENT_H, snapVal(origH + (e.clientY - startY) / z));
-    renderCanvas();
-  }
-  function onUp() {
-    window.removeEventListener("pointermove", onMove);
-    window.removeEventListener("pointerup", onUp);
-    if (state.selectedId === item.instance_id) fillPropsForm(item);
-  }
-  window.addEventListener("pointermove", onMove);
-  window.addEventListener("pointerup", onUp);
-}
-
-// ---------------- 屬性面板 ----------------
-
-function findElement(instanceId) {
-  return state.layout.elements.find((e) => e.instance_id === instanceId);
-}
-
-function selectElement(instanceId) {
-  state.selectedId = instanceId;
-  renderCanvas();
-  const item = findElement(instanceId);
-  if (item) fillPropsForm(item);
-}
-
-function fillPropsForm(item) {
-  el("props-empty").hidden = true;
-  el("props-form").hidden = false;
-  el("p-instance-id").value = item.instance_id;
-  el("p-module-id").value = item.module_id;
-  el("p-x").value = item.x;
-  el("p-y").value = item.y;
-  el("p-w").value = item.w;
-  el("p-h").value = item.h;
-  el("p-z").value = item.z || 0;
-  el("p-refresh").value = item.refresh_interval;
-  el("p-refresh-policy").value = item.refresh_policy || "auto";
-  el("p-config").value = JSON.stringify(item.config || {}, null, 2);
-  renderConfigFields(item);
-}
-
-function renderConfigFields(item) {
-  const container = el("config-fields");
-  container.replaceChildren();
-  const manifest = state.modules.find((m) => m.module_id === item.module_id);
-  const fields = manifest?.config_schema || [];
-  if (!fields.length) return;
-  const config = item.config || {};
-  for (const field of fields) {
-    const label = document.createElement("label");
-    label.textContent = field.label || field.key;
-    let input;
-    if (field.type === "json") {
-      input = document.createElement("textarea");
-      input.rows = 3;
-      input.value = JSON.stringify(config[field.key] ?? field.default, null, 2);
-    } else {
-      input = document.createElement("input");
-      input.type = field.type === "number" ? "number" : "text";
-      input.value = config[field.key] ?? field.default ?? "";
-    }
-    input.dataset.configKey = field.key;
-    input.dataset.configType = field.type || "text";
-    input.addEventListener("input", syncRawConfigFromFields);
-    label.appendChild(input);
-    container.appendChild(label);
-  }
-}
-
-function syncRawConfigFromFields() {
-  let config;
-  try {
-    config = JSON.parse(el("p-config").value || "{}");
-  } catch (_) {
-    return;
-  }
-  for (const field of el("config-fields").querySelectorAll("[data-config-key]")) {
-    const key = field.dataset.configKey;
-    try {
-      config[key] = field.dataset.configType === "json"
-        ? JSON.parse(field.value || "null")
-        : field.dataset.configType === "number" ? Number(field.value) : field.value;
-    } catch (_) {
-      // JSON 尚在輸入中的不完整狀態先不覆寫原本設定，套用時會顯示明確錯誤。
-    }
-  }
-  el("p-config").value = JSON.stringify(config, null, 2);
-}
-
-function applyProps() {
-  const item = findElement(state.selectedId);
-  if (!item) return;
-  item.x = parseInt(el("p-x").value, 10) || 0;
-  item.y = parseInt(el("p-y").value, 10) || 0;
-  item.w = parseInt(el("p-w").value, 10) || 10;
-  item.h = parseInt(el("p-h").value, 10) || 10;
-  item.z = parseInt(el("p-z").value, 10) || 0;
-  item.refresh_interval = parseInt(el("p-refresh").value, 10) || 30;
-  item.refresh_policy = el("p-refresh-policy").value;
-  try {
-    item.config = JSON.parse(el("p-config").value);
-  } catch (e) {
-    alert("config 不是合法的 JSON：" + e.message);
-    return;
-  }
-  renderCanvas();
-  setEditorStatus("已套用元件設定", "ok");
-}
-
-function deleteSelected() {
-  if (!state.selectedId) return;
-  state.layout.elements = state.layout.elements.filter((e) => e.instance_id !== state.selectedId);
-  state.selectedId = null;
-  el("props-form").hidden = true;
-  el("props-empty").hidden = false;
-  renderCanvas();
-}
-
-// ---------------- 出勤／請假 ----------------
-
-function updateAttendanceFormState() {
-  const leave = el("attendance-on-leave").checked;
-  el("attendance-clock-in").disabled = leave;
-  el("attendance-clock-out").disabled = leave;
-  el("attendance-leave-note").disabled = !leave;
-}
-
-function showAttendance(snapshot) {
-  state.attendance = snapshot;
-  el("attendance-clock-in").value = snapshot.clock_in || "";
-  el("attendance-clock-out").value = snapshot.clock_out || "";
-  el("attendance-on-leave").checked = Boolean(snapshot.on_leave);
-  el("attendance-leave-note").value = snapshot.leave_note || "";
-  const labels = { pending: "尚未打卡", working: "上班中", off_work: "今日已下班", leave: "今日請假" };
-  el("attendance-summary").textContent = `${snapshot.date}：${labels[snapshot.status] || snapshot.status}`;
-  updateAttendanceFormState();
-}
-
-async function loadAttendance() {
-  try {
-    showAttendance(await api("/api/attendance/today"));
-  } catch (error) {
-    el("attendance-summary").textContent = `出勤資料讀取失敗：${error.message}`;
-  }
-}
-
-async function saveAttendance() {
-  const payload = {
-    clock_in: el("attendance-clock-in").value || null,
-    clock_out: el("attendance-clock-out").value || null,
-    on_leave: el("attendance-on-leave").checked,
-    leave_note: el("attendance-leave-note").value.trim(),
-  };
-  try {
-    const saved = await api("/api/attendance/today", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    showAttendance(saved);
-    setEditorStatus("今日打卡／請假狀態已儲存", "ok");
-  } catch (error) {
-    setEditorStatus("出勤資料儲存失敗", "error");
-    alert(`儲存失敗：${error.message}`);
-  }
-}
-
-// ---------------- 情境設定 ----------------
-
-async function loadScenes(deviceId) {
-  const scenes = await api(`/api/devices/${deviceId}/scenes`);
-  el("scenes-json").value = JSON.stringify(scenes, null, 2);
-}
-
-async function saveScenes() {
-  if (!state.deviceId) return;
-  let parsed;
-  try {
-    parsed = JSON.parse(el("scenes-json").value);
-  } catch (e) {
-    alert("情境設定不是合法的 JSON：" + e.message);
-    return;
-  }
-  await api(`/api/devices/${state.deviceId}/scenes`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(parsed),
-  });
-  alert("已儲存情境設定");
-}
-
-// ---------------- 即時預覽 ----------------
-
-function startPreviewLoop() {
-  setInterval(async () => {
-    if (!state.deviceId) return;
-    el("preview-img").src = `/api/devices/${state.deviceId}/frame.png?t=${Date.now()}`;
-    try {
-      const meta = await api(`/api/devices/${state.deviceId}/frame-meta`);
-      el("preview-meta").textContent =
-        `scene: ${meta.scene || "(default)"} / layout: ${meta.layout_id || "-"} / ` +
-        `refresh: ${meta.refresh_mode} / dirty: ${meta.dirty_boxes.length} / partial: ${meta.partial_count_since_full || 0}`;
-    } catch (e) {
-      el("preview-meta").textContent = "預覽讀取失敗：" + e.message;
-    }
-  }, 3000);
-}
-
-// ---------------- 圖片素材庫 ----------------
-
-async function loadAssets() {
-  try {
-    state.assets = await api("/api/assets");
-  } catch (e) {
-    console.warn("素材庫讀取失敗：", e.message);
-    state.assets = [];
-  }
-  renderAssetList();
-}
-
-function formatBytes(n) {
-  if (!n && n !== 0) return "";
-  if (n < 1024) return `${n}B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)}KB`;
-  return `${(n / 1024 / 1024).toFixed(1)}MB`;
-}
-
-function renderAssetList() {
-  const container = el("asset-list");
-  if (!state.assets.length) {
-    container.innerHTML = `<p class="hint">還沒有上傳過素材。</p>`;
-    return;
-  }
-  container.innerHTML = state.assets
-    .map(
-      (a) => `
-      <div class="asset-item" data-asset-id="${a.id}">
-        <img src="/api/assets/${a.id}" alt="${a.original_filename || a.id}" loading="lazy" />
-        <div class="asset-item-meta">
-          <span title="${a.original_filename || ""}">${a.original_filename || a.id}</span>
-          <span class="hint">${formatBytes(a.size)}</span>
-        </div>
-        <div class="asset-item-actions">
-          <button type="button" class="asset-apply-btn" data-asset-id="${a.id}">套用</button>
-          <button type="button" class="asset-delete-btn danger" data-asset-id="${a.id}">刪除</button>
-        </div>
-      </div>`
-    )
-    .join("");
-
-  container.querySelectorAll(".asset-apply-btn").forEach((btn) => {
-    btn.addEventListener("click", () => applyAssetToSelected(btn.dataset.assetId));
-  });
-  container.querySelectorAll(".asset-delete-btn").forEach((btn) => {
-    btn.addEventListener("click", () => deleteAsset(btn.dataset.assetId));
-  });
-}
-
-async function uploadSelectedAsset() {
-  const input = el("asset-file-input");
-  const file = input.files && input.files[0];
-  if (!file) {
-    alert("請先選一個圖片檔案");
-    return;
-  }
-  const form = new FormData();
-  form.append("file", file);
-  try {
-    await api("/api/assets", { method: "POST", body: form });
-  } catch (e) {
-    alert("上傳失敗：" + e.message);
-    return;
-  }
-  input.value = "";
-  await loadAssets();
-}
-
-async function deleteAsset(assetId) {
-  if (!confirm("確定要刪除這個素材嗎？如果還有元件在用它，畫面會顯示「找不到素材」。")) return;
-  try {
-    await api(`/api/assets/${assetId}`, { method: "DELETE" });
-  } catch (e) {
-    alert("刪除失敗：" + e.message);
-    return;
-  }
-  await loadAssets();
-}
-
-function applyAssetToSelected(assetId) {
-  const item = findElement(state.selectedId);
-  if (!item) {
-    alert("請先在畫布上選取一個「圖片」元件");
-    return;
-  }
-  if (item.module_id !== "image") {
-    alert(`目前選取的是「${item.module_id}」元件，只有「圖片」模組的元件可以套用素材`);
-    return;
-  }
-  item.config = item.config || {};
-  item.config.asset_id = assetId;
-  fillPropsForm(item);
-  renderCanvas();
-}
-
-init().catch((e) => {
-  console.error(e);
-  alert("初始化失敗：" + e.message);
-});
+init().catch(message);
