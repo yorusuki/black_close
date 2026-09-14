@@ -22,7 +22,7 @@
     ],
     "color_mode": "1bit",
     "partial_refresh": true,
-    "full_refresh_interval_seconds": 1200,
+    "full_refresh_interval_seconds": 18000,
     "min_full_refresh_interval_seconds": 60,
     "default_layout_id": "waveshare426-01_dashboard",
     "attendance_scenes": {
@@ -31,6 +31,6 @@
       "rest_layout_id": "waveshare426-01_rest",
       "leave_layout_id": "waveshare426-01_leave"
     },
-    "note": "1bit 模式可使用局刷。工作畫面於有變化時局刷，至少相隔 20 分鐘的下一次變化改為全刷；下班、週末與請假使用靜態全頁，不會自行刷新。"
+    "note": "1bit 模式可使用局刷。工作畫面一般於有變化時局刷；全刷間隔預設 5 小時，亦可由 Server 管理台為每台 Pi 設定每日指定時間。靜態頁到期時同樣會全刷一次。"
   }
 ]

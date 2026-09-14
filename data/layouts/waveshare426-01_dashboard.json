@@ -8,45 +8,34 @@
       "config": {"time_format": "%H:%M"}
     },
     {
-      "instance_id": "attendance-today",
-      "module_id": "attendance",
-      "x": 80, "y": 92, "w": 640, "h": 220, "z": 1,
+      "instance_id": "clock-in-small",
+      "module_id": "clock_in_badge",
+      "x": 584, "y": 60, "w": 192, "h": 64, "z": 20,
       "refresh_interval": 30,
       "refresh_policy": "partial",
-      "config": {"title": "上下班打卡與請假"}
+      "config": {"label": "上班打卡"}
     },
     {
-      "instance_id": "progress-meteor",
-      "module_id": "progress_bar",
-      "x": 150, "y": 330, "w": 500, "h": 80, "z": 1,
-      "refresh_interval": 300,
-      "config": {
-        "title": "METEOR LEVEL",
-        "value_source": {"type": "manual", "value": 6.8},
-        "min": 0, "max": 10, "unit": "",
-        "footer_lines": []
-      }
-    },
-    {
-      "instance_id": "mascot-bottom",
+      "instance_id": "mascot-work-main",
       "module_id": "mascot",
-      "x": 0, "y": 416, "w": 800, "h": 64, "z": 20,
-      "refresh_interval": 5,
+      "x": 32, "y": 132, "w": 736, "h": 184, "z": 1,
+      "refresh_interval": 120,
+      "refresh_policy": "partial",
+      "config": {"interval_seconds": 120}
+    },
+    {
+      "instance_id": "workday-progress",
+      "module_id": "progress_bar",
+      "x": 96, "y": 338, "w": 608, "h": 132, "z": 1,
+      "refresh_interval": 30,
+      "refresh_policy": "partial",
       "config": {
-        "interval_seconds": 6,
-        "frames": [
-          {"face": "( ◞д◟ )", "line": "待辦不是清單，是會繁殖的生物。"},
-          {"face": "(´-ω-`)", "line": "我沒有拖延，只是在儲存體力。"},
-          {"face": "（￣ω￣;）", "line": "這封信很急，昨天卻沒人理它。"},
-          {"face": "(._.)", "line": "會議結束了；待辦才剛開會。"},
-          {"face": "(=_=)", "line": "今天的 KPI：平安撐到下班。"},
-          {"face": "（；￣д￣）", "line": "我正在處理，處理我的情緒。"},
-          {"face": "(¬_¬)", "line": "已讀不回，是我對通知的溫柔。"},
-          {"face": "(｡-ω-)zzz", "line": "腦袋已下班，身體還在打卡。"},
-          {"face": "(・_・)", "line": "需求沒消失，只是換名字回來。"},
-          {"face": "（´▽｀）", "line": "快下班了，先別讓我看到新訊息。"},
-          {"face": "(T_T)", "line": "我不是累，只是電量顯示 1%。"},
-          {"face": "(ง •̀_•́)ง", "line": "再一個番茄鐘，然後原地蒸發。"}
+        "title": "今日生存進度",
+        "value_source": {"type": "time_progress", "start": "09:00", "end": "18:30"},
+        "min": 0, "max": 100, "unit": "%",
+        "footer_lines": [
+          {"text": "距離下班", "center": false},
+          {"big": true, "center": true, "value_source": {"type": "time_until", "target": "18:30"}}
         ]
       }
     }

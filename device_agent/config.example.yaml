@@ -1,19 +1,28 @@
-# 複製為 config.yaml。以下兩項為新版 Pi agent 唯一必要的遠端設定：
-# - server_url：Docker 管理端的公開 HTTPS URL；不加 /api 或結尾斜線。
-# - device_token：管理端建立／重配發時只顯示一次；不得放入 URL、log 或 Git。
-# Pi agent 不保存 device_id、layout、LINE credential 或全域 API token。
+# 複製為 config.yaml。新版 Pi agent 只接受 server_url 與 device_token，
+# 不保存 device_id、layout、LINE credential 或全域 API token。
+# 可用 EPAGERPI_SERVER_URL、EPAGERPI_DEVICE_TOKEN 暫時覆寫這兩項；長期部署請用本檔。
+# 此檔含 device token，建立後執行：chmod 600 device_agent/config.yaml
+
+# [必填] Docker 管理端的公開 HTTPS URL；不加 /api 或結尾斜線。
 server_url: https://epagerpi.example.com
+# [必填] 管理端建立／重配發時只顯示一次的單一 Pi token；不得提交、貼到 URL 或寫入 log。
 device_token: replace-with-device-token
 
-# 選用：版面資料輪詢與本機 e-paper 合成頻率（秒）。
-# poll 最小為 5 秒，tick 最小為 0.5 秒；一般不建議調低，以保護電子紙面板。
+# [選填，預設 30] 向 Server 取得新版面資料的間隔（秒）；最小 5，不建議調低。
 poll_interval_seconds: 30
+# [選填，預設 1] Pi 本機重新合成與判斷刷新的間隔（秒）；最小 0.5。
 tick_seconds: 1
 
 # ---- UPS 電量看門狗 ----
+# [選填] 未安裝 UPS 時可整段刪除；各欄位只在 enabled: true 時才會被使用。
 ups:
-  enabled: true
+  # [選填，預設 true（本範例設為 false）] 是否啟用 UPS 監控。
+  enabled: false
+  # [選填，預設 0x43] UPS 的 I2C 位址；依實際硬體修改。
   i2c_address: 0x43
+  # [選填，預設 30] 讀取 UPS 電量間隔（秒）。
   poll_interval_seconds: 30
+  # [選填，預設 35] 電量低於此百分比才開始計算低電量連續次數。
   shutdown_threshold_percent: 35
+  # [選填，預設 3] 連續低電量讀值次數；達到後 Pi 執行安全關機。
   shutdown_confirm_reads: 3

@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import datetime
+import json
 import logging
+import os
 import time
 
 import requests
@@ -12,6 +14,7 @@ from .drivers import build_driver
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("device_agent.agent")
+LAYOUT_CACHE_PATH = agent_config.BASE_DIR / "data" / "runtime" / "last_device_layout.json"
 
 
 def _headers(token: str) -> dict[str, str]:
@@ -22,6 +25,51 @@ def fetch_layout(server_url: str, headers: dict) -> dict:
     response = requests.get(f"{server_url}/api/v1/device/layout", headers=headers, timeout=15)
     response.raise_for_status()
     return response.json()
+
+
+def _valid_cached_layout(value: object) -> bool:
+    """只接受 agent 可安全拿去本機渲染的最小 layout 結構。"""
+    if not isinstance(value, dict) or not isinstance(value.get("device_id"), str):
+        return False
+    profile = value.get("profile")
+    resolution = profile.get("resolution") if isinstance(profile, dict) else None
+    return (
+        isinstance(resolution, list)
+        and len(resolution) == 2
+        and all(isinstance(item, int) and item > 0 for item in resolution)
+        and isinstance(value.get("elements"), list)
+    )
+
+
+def load_layout_cache() -> dict | None:
+    """載入最後一次 API 成功回應，讓 Pi 重啟後仍能在離線狀態本機刷新。"""
+    try:
+        value = json.loads(LAYOUT_CACHE_PATH.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, json.JSONDecodeError):
+        log.warning("離線版面快取無法讀取，會等待 Server 提供新版本")
+        return None
+    if not _valid_cached_layout(value):
+        log.warning("離線版面快取格式無效，會等待 Server 提供新版本")
+        return None
+    return value
+
+
+def save_layout_cache(resolved: dict) -> None:
+    """以原子替換保存非機密的已解析版面，檔案僅限 Pi 帳號讀寫。"""
+    if not _valid_cached_layout(resolved):
+        raise ValueError("Server 回傳的 layout 格式不完整")
+    LAYOUT_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    temporary = LAYOUT_CACHE_PATH.with_suffix(".tmp")
+    try:
+        temporary.write_text(json.dumps(resolved, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        os.chmod(temporary, 0o600)
+        temporary.replace(LAYOUT_CACHE_PATH)
+    finally:
+        # replace() 成功後暫存檔已不存在；失敗時盡力清理，不影響既有有效快取。
+        if temporary.exists():
+            temporary.unlink(missing_ok=True)
 
 
 def report_telemetry(server_url: str, headers: dict, payload: dict) -> None:
@@ -61,17 +109,33 @@ def run() -> None:
     cfg = agent_config.load_config()
     server_url, headers = cfg["server_url"], _headers(cfg["device_token"])
     poll_interval, tick_seconds = cfg["poll_interval_seconds"], cfg["tick_seconds"]
-    resolved = None
+    resolved = load_layout_cache()
     driver = None
     last_poll = 0.0
     last_mode = "none"
     log.info("agent 啟動：server=%s，採 device token 驗證", server_url)
+    if resolved is not None:
+        try:
+            driver = build_driver(resolved["profile"])
+            log.info("已載入最後有效版面；Server 不可達時仍可依本機刷新政策運作")
+        except (ValueError, KeyError):
+            log.exception("離線版面設定無法建立硬體驅動，將等待 Server 提供新版本")
+            resolved = None
 
     while True:
         now = time.monotonic()
         if resolved is None or now - last_poll >= poll_interval:
             try:
-                resolved = fetch_layout(server_url, headers)
+                fresh_layout = fetch_layout(server_url, headers)
+                if not _valid_cached_layout(fresh_layout):
+                    raise ValueError("Server 回傳的 layout 格式不完整")
+                try:
+                    save_layout_cache(fresh_layout)
+                except OSError:
+                    # 儲存空間或檔案權限問題不能妨礙已驗證的當前版面顯示；記錄後
+                    # 下輪會重試保存，既有快取也不會被破壞。
+                    log.exception("無法保存離線版面快取，這次仍使用 Server 新版面")
+                resolved = fresh_layout
                 last_poll = now
                 sync_assets(server_url, headers, resolved)
                 if driver is None:
