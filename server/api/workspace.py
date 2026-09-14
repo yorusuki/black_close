@@ -77,6 +77,13 @@ def preview_device_page(device_id):
     return response
 
 
+@bp.get("/devices/<device_id>/assignment")
+@auth.require_user
+def get_device_assignment(device_id):
+    assignment = workspace_store.device_assignment(_user_id(), device_id)
+    return jsonify(assignment) if assignment else (jsonify({"error": "not_found"}), 404)
+
+
 @bp.get("/pages")
 @auth.require_user
 def list_pages():

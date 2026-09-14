@@ -38,12 +38,14 @@ def create_app() -> Flask:
 
     @app.get("/")
     def index():
-        return send_from_directory(FRONTEND_DIR, "index.html")
+        # 管理台的 HTML、CSS、JS 必須是同一版；不要讓瀏覽器把舊 HTML 留在快取中，
+        # 否則新版 JS 會找不到新版 UI 的 DOM 節點。
+        return send_from_directory(FRONTEND_DIR, "index.html", max_age=0)
 
     @app.get("/<path:filename>")
     def static_files(filename):
         # 排版編輯器的靜態檔（純 JS/CSS，不靠外部 CDN，離線也能用）
-        return send_from_directory(FRONTEND_DIR, filename)
+        return send_from_directory(FRONTEND_DIR, filename, max_age=0)
 
     return app
 

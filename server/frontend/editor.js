@@ -1,18 +1,20 @@
 "use strict";
 
-const state = { csrf: "", modules: [], devices: [], pages: [], rules: [], page: null, selected: null, activeTab: "overview", drag: null, canvas: { width: 800, height: 480, scale: 1 } };
+const state = { csrf: "", modules: [], devices: [], pages: [], rules: [], page: null, selected: null, assignment: null, activeTab: "overview", drag: null, canvas: { width: 800, height: 480, scale: 1 } };
 const el = (id) => document.getElementById(id);
 const clone = (value) => value === undefined ? null : JSON.parse(JSON.stringify(value));
 const modelLabel = { waveshare_4in26: "Waveshare 4.26 吋", inky_phat: "Pimoroni Inky pHAT", mock: "Mock 預覽裝置" };
 const categoryLabel = { status: "狀態與時間", data: "數據與進度", visual: "視覺與素材", other: "其他" };
+const requiredElementIds = ["asset-file", "asset-form", "asset-list", "assignment-status", "attendance-form", "attendance-status", "canvas-device", "canvas-meta", "clock-in", "clock-out", "config-fields", "copy-token", "device-form", "device-list", "device-model", "device-name", "element-empty", "element-form", "identity", "layout-canvas", "layout-preview", "leave-note", "load-active-page", "logout", "module-palette", "new-page", "new-page-name", "on-leave", "overview-devices", "page-assignment-status", "page-name", "page-select", "preview-device-name", "preview-empty", "refresh-data", "refresh-preview", "remove-element", "rule-attendance", "rule-device", "rule-end", "rule-form", "rule-holiday", "rule-list", "rule-name", "rule-page", "rule-priority", "rule-start", "save-page", "selected-module-name", "summary-cards", "toast", "token-dialog", "token-value", "weekdays"];
 
 async function api(path, options = {}) {
   const headers = new Headers(options.headers || {});
   if (options.method && !["GET", "HEAD"].includes(options.method)) headers.set("X-CSRF-Token", state.csrf);
   const response = await fetch(path, { ...options, headers });
   if (!response.ok) {
-    let detail = "";
-    try { const body = await response.json(); detail = body.message || body.error || ""; } catch { detail = await response.text(); }
+    const raw = await response.text();
+    let detail = raw;
+    try { const body = JSON.parse(raw); detail = body.message || body.error || raw; } catch { /* 非 JSON 錯誤頁直接顯示原始文字。 */ }
     throw new Error(detail || response.statusText);
   }
   return response.status === 204 ? null : response.json();
@@ -22,7 +24,16 @@ function notify(text, isError = false) {
   const toast = el("toast"); toast.textContent = text; toast.className = `toast${isError ? " error" : ""}`; toast.hidden = false;
   clearTimeout(notify.timer); notify.timer = setTimeout(() => { toast.hidden = true; }, 3600);
 }
-function message(error) { notify(error instanceof Error ? error.message : String(error), true); }
+function message(error) {
+  const text = error instanceof Error ? error.message : String(error);
+  // 舊版 HTML 快取時 toast 本身也可能不存在，避免錯誤處理又觸發第二個 null 例外。
+  if (!el("toast")) { window.alert(text); return; }
+  notify(text, true);
+}
+function assertDocumentContract() {
+  const missing = requiredElementIds.filter((id) => !el(id));
+  if (missing.length) throw new Error(`管理台檔案版本不一致，缺少：${missing.join(", ")}。請重新整理頁面；若仍持續，請重新部署 Server。`);
+}
 function option(select, values, label, selectedValue = select.value) {
   select.replaceChildren(...values.map((value) => Object.assign(document.createElement("option"), { value: value.id, textContent: label(value) })));
   if (values.some((value) => value.id === selectedValue)) select.value = selectedValue;
@@ -85,7 +96,7 @@ function renderRules() {
   el("rule-list").replaceChildren(...state.rules.map((rule) => {
     const row = document.createElement("article"); row.className = "list-row"; const days = rule.weekdays.length ? rule.weekdays.map((day) => "一二三四五六日"[day]).join("、") : "每天";
     const text = document.createElement("div"); const title = document.createElement("h3"); title.textContent = rule.name; const detail = document.createElement("p"); detail.textContent = `${devices.get(rule.device_id) || "已移除設備"} · ${pages.get(rule.page_id) || "已移除頁面"} · 優先 ${rule.priority} · ${days}`; text.append(title, detail);
-    const remove = document.createElement("button"); remove.className = "button button-danger"; remove.type = "button"; remove.textContent = "刪除"; remove.onclick = async () => { if (!confirm(`刪除規則「${rule.name}」？`)) return; try { await api(`/api/workspace/rules/${rule.id}`, { method: "DELETE" }); await refresh(); notify("規則已刪除"); } catch (error) { message(error); } };
+    const remove = document.createElement("button"); remove.className = "button button-danger"; remove.type = "button"; remove.textContent = "刪除"; remove.onclick = async () => { if (!confirm(`刪除規則「${rule.name}」？`)) return; try { await api(`/api/workspace/rules/${rule.id}`, { method: "DELETE" }); await refresh(); await loadDeviceAssignment(); notify("規則已刪除，已重新判定目前套用頁面"); } catch (error) { message(error); } };
     row.append(text, remove); return row;
   }));
 }
@@ -101,6 +112,30 @@ function renderModulePalette() {
 }
 
 function editorDevice() { return state.devices.find((device) => device.id === el("canvas-device").value) || state.devices.find((device) => !device.hidden) || state.devices[0] || null; }
+function renderAssignment() {
+  const device = editorDevice(); const assignment = state.assignment?.device_id === device?.id ? state.assignment : null;
+  const status = el("assignment-status"); const pageStatus = el("page-assignment-status"); const load = el("load-active-page"); const previewName = el("preview-device-name");
+  previewName.textContent = device ? `目前編輯／預覽：${device.name}` : "尚未選擇設備";
+  if (!device) { status.textContent = "請先建立或選擇一台設備。"; pageStatus.textContent = ""; load.disabled = true; return; }
+  if (!assignment) { status.textContent = "正在讀取此 Pi 的套用規則…"; pageStatus.textContent = ""; load.disabled = true; return; }
+  const active = assignment.active_rule; const activePage = assignment.active_page;
+  if (!active || !activePage) {
+    status.textContent = `目前沒有符合條件的規則（出勤：${assignment.attendance_status}）。Pi 會收到空白版面。`;
+    pageStatus.textContent = "此頁面尚未確認為該 Pi 的目前套用頁面；請在「顯示規則」建立或調整指派。";
+    load.disabled = true;
+    return;
+  }
+  status.textContent = `目前套用「${activePage.name}」：規則「${active.name}」（優先序 ${active.priority}，出勤：${assignment.attendance_status}）。`;
+  load.disabled = false;
+  if (state.page?.id === activePage.id) pageStatus.textContent = "這就是目前套用到此 Pi 的頁面；儲存後，Pi 下次向 Server 取得版面時會使用新內容。";
+  else if (assignment.rules.some((rule) => rule.page_id === state.page?.id)) pageStatus.textContent = "此頁面已指派給該 Pi，但目前條件不符合；現在正在套用另一頁。";
+  else pageStatus.textContent = "目前編輯的頁面尚未指派給這台 Pi；儲存不會改變它的顯示內容。";
+}
+async function loadDeviceAssignment(loadActive = false) {
+  const device = editorDevice(); state.assignment = device ? await api(`/api/workspace/devices/${encodeURIComponent(device.id)}/assignment`) : null;
+  if (loadActive && state.assignment?.active_page && state.page?.id !== state.assignment.active_page.id) await loadPage(state.assignment.active_page.id);
+  renderAssignment();
+}
 function updateCanvasDimensions() {
   const profile = editorDevice()?.profile || { resolution: [800, 480] }; const [width, height] = profile.resolution || [800, 480]; const scale = Math.min(1, 680 / Math.max(width, 1)); state.canvas = { width, height, scale };
   const canvas = el("layout-canvas"); canvas.style.width = `${Math.max(1, Math.round(width * scale))}px`; canvas.style.height = `${Math.max(1, Math.round(height * scale))}px`;
@@ -130,7 +165,7 @@ function renderInspector() {
     const input = document.createElement("input"); input.type = schema.type === "number" ? "number" : "text"; input.dataset.key = schema.key; input.dataset.type = schema.type || "text"; input.value = item.config?.[schema.key] ?? schema.default ?? ""; label.append(input); fields.append(label);
   }
 }
-function renderPage() { if (!state.page) return; el("page-name").value = state.page.name; el("page-select").value = state.page.id; renderCanvas(); }
+function renderPage() { if (!state.page) { renderAssignment(); return; } el("page-name").value = state.page.name; el("page-select").value = state.page.id; renderCanvas(); renderAssignment(); }
 function snap(value) { return Math.round(value / 8) * 8; }
 function clamp(value, lower, upper) { return Math.min(Math.max(value, lower), Math.max(lower, upper)); }
 function beginDrag(event, id, mode) {
@@ -162,10 +197,10 @@ function applyElement(event) {
 
 async function loadPage(id) { state.page = await api(`/api/workspace/pages/${id}`); state.selected = null; renderPage(); updatePreview(); }
 async function savePage() {
-  if (!state.page) return; try { const name = el("page-name").value.trim(); const page = await api(`/api/workspace/pages/${state.page.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, content: state.page.content }) }); state.page = page; await refresh(false); renderPage(); updatePreview(); notify("版面已儲存並更新預覽"); } catch (error) { message(error); }
+  if (!state.page) return; try { const name = el("page-name").value.trim(); const page = await api(`/api/workspace/pages/${state.page.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, content: state.page.content }) }); state.page = page; await refresh(false); await loadDeviceAssignment(); renderPage(); updatePreview(); const activePageId = state.assignment?.active_page?.id; const assigned = state.assignment?.rules?.some((rule) => rule.page_id === state.page.id); notify(activePageId === state.page.id ? "版面已儲存；此 Pi 下次取得版面時會套用新內容" : assigned ? "版面已儲存；此頁面會在對應規則符合時套用" : "版面已儲存；尚未指派給目前這台 Pi"); } catch (error) { message(error); }
 }
 function updatePreview() {
-  const deviceId = el("preview-device").value; const image = el("layout-preview"); const empty = el("preview-empty");
+  const deviceId = editorDevice()?.id; const image = el("layout-preview"); const empty = el("preview-empty");
   if (!state.page || !deviceId) { image.hidden = true; empty.hidden = false; return; }
   image.hidden = false; empty.hidden = true; image.src = `/api/workspace/devices/${encodeURIComponent(deviceId)}/preview?page_id=${encodeURIComponent(state.page.id)}&t=${Date.now()}`;
   image.onerror = () => { image.hidden = true; empty.hidden = false; empty.textContent = "預覽產生失敗，請確認設備與版面仍存在。"; };
@@ -177,7 +212,7 @@ function showToken(token) { el("token-value").textContent = token; el("token-dia
 
 async function refresh(loadSelected = true) {
   const currentPageId = state.page?.id; [state.devices, state.pages, state.rules] = await Promise.all([api("/api/workspace/devices"), api("/api/workspace/pages"), api("/api/workspace/rules")]);
-  const activeDevices = state.devices.filter((device) => !device.hidden); option(el("page-select"), state.pages, (page) => page.name, currentPageId); option(el("rule-page"), state.pages, (page) => page.name); option(el("rule-device"), activeDevices, (device) => device.name); option(el("canvas-device"), state.devices, (device) => device.name); option(el("preview-device"), state.devices, (device) => device.name);
+  const activeDevices = state.devices.filter((device) => !device.hidden); option(el("page-select"), state.pages, (page) => page.name, currentPageId); option(el("rule-page"), state.pages, (page) => page.name); option(el("rule-device"), activeDevices, (device) => device.name); option(el("canvas-device"), state.devices, (device) => device.name);
   renderSummary(); renderDevices(); renderRules(); renderModulePalette();
   if (loadSelected && currentPageId && state.pages.some((page) => page.id === currentPageId)) await loadPage(currentPageId);
   else if (loadSelected && !state.page && state.pages[0]) await loadPage(state.pages[0].id);
@@ -187,9 +222,9 @@ function bindEvents() {
   document.querySelectorAll(".tab").forEach((tab) => tab.addEventListener("click", () => switchTab(tab.dataset.tab))); document.querySelectorAll("[data-open-tab]").forEach((button) => button.addEventListener("click", () => switchTab(button.dataset.openTab)));
   el("device-form").onsubmit = async (event) => { event.preventDefault(); try { const result = await api("/api/workspace/devices", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: el("device-name").value, model_id: el("device-model").value }) }); el("device-name").value = ""; await refresh(); showToken(result.token); notify("設備已建立"); } catch (error) { message(error); } };
   el("new-page").onclick = async () => { try { const page = await api("/api/workspace/pages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: el("new-page-name").value }) }); el("new-page-name").value = ""; state.page = page; await refresh(false); renderPage(); switchTab("layouts"); notify("新頁面已建立"); } catch (error) { message(error); } };
-  el("page-select").onchange = () => loadPage(el("page-select").value).catch(message); el("save-page").onclick = savePage; el("canvas-device").onchange = renderPage; el("preview-device").onchange = updatePreview; el("refresh-preview").onclick = updatePreview; el("element-form").onsubmit = applyElement;
+  el("page-select").onchange = () => loadPage(el("page-select").value).catch(message); el("save-page").onclick = savePage; el("canvas-device").onchange = async () => { try { renderPage(); await loadDeviceAssignment(true); } catch (error) { message(error); } }; el("load-active-page").onclick = () => { const pageId = state.assignment?.active_page?.id; if (pageId) loadPage(pageId).catch(message); }; el("refresh-preview").onclick = updatePreview; el("element-form").onsubmit = applyElement;
   el("remove-element").onclick = () => { const item = selectedElement(); if (!item || !confirm("刪除此元件？")) return; state.page.content.elements = state.page.content.elements.filter((entry) => entry.instance_id !== item.instance_id); state.selected = null; renderPage(); notify("元件已刪除，記得儲存"); };
-  el("rule-form").onsubmit = async (event) => { event.preventDefault(); try { await api("/api/workspace/rules", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: el("rule-name").value, device_id: el("rule-device").value, page_id: el("rule-page").value, priority: Number(el("rule-priority").value), start_time: el("rule-start").value || null, end_time: el("rule-end").value || null, attendance_status: el("rule-attendance").value || null, holiday: el("rule-holiday").value === "" ? null : el("rule-holiday").value === "true", weekdays: [...el("weekdays").querySelectorAll("input:checked")].map((box) => Number(box.value)) }) }); event.target.reset(); await refresh(); notify("規則已新增"); } catch (error) { message(error); } };
+  el("rule-form").onsubmit = async (event) => { event.preventDefault(); try { await api("/api/workspace/rules", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: el("rule-name").value, device_id: el("rule-device").value, page_id: el("rule-page").value, priority: Number(el("rule-priority").value), start_time: el("rule-start").value || null, end_time: el("rule-end").value || null, attendance_status: el("rule-attendance").value || null, holiday: el("rule-holiday").value === "" ? null : el("rule-holiday").value === "true", weekdays: [...el("weekdays").querySelectorAll("input:checked")].map((box) => Number(box.value)) }) }); event.target.reset(); await refresh(); await loadDeviceAssignment(); notify("規則已新增，已重新判定目前套用頁面"); } catch (error) { message(error); } };
   el("asset-form").onsubmit = async (event) => { event.preventDefault(); try { const data = new FormData(); data.append("file", el("asset-file").files[0]); await api("/api/workspace/assets", { method: "POST", body: data }); event.target.reset(); await loadAssets(); notify("圖片已上傳"); } catch (error) { message(error); } };
   el("attendance-form").onsubmit = async (event) => { event.preventDefault(); try { await api("/api/workspace/attendance/today", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clock_in: el("clock-in").value || null, clock_out: el("clock-out").value || null, on_leave: el("on-leave").checked, leave_note: el("leave-note").value }) }); await loadAttendance(); notify("出勤資料已儲存"); } catch (error) { message(error); } };
   el("refresh-data").onclick = async () => { try { await refresh(); notify("資料已重新整理"); } catch (error) { message(error); } };
@@ -199,6 +234,7 @@ function bindEvents() {
 }
 
 async function init() {
-  const me = await api("/api/workspace/me"); state.csrf = me.csrf_token; el("identity").textContent = `${me.display_name}（${me.role}）`; state.modules = await api("/api/modules"); bindEvents(); await refresh(); const initial = location.hash.slice(1); switchTab(["overview", "devices", "layouts", "rules", "content"].includes(initial) ? initial : "overview");
+  assertDocumentContract();
+  const me = await api("/api/workspace/me"); state.csrf = me.csrf_token; el("identity").textContent = `${me.display_name}（${me.role}）`; state.modules = await api("/api/modules"); bindEvents(); await refresh(); await loadDeviceAssignment(true); const initial = location.hash.slice(1); switchTab(["overview", "devices", "layouts", "rules", "content"].includes(initial) ? initial : "overview");
 }
 init().catch(message);

@@ -512,6 +512,42 @@ def _attendance_status(user_id: str, day: dt.date) -> str:
     return "off_work" if row["clock_in"] and row["clock_out"] else "working" if row["clock_in"] else "pending"
 
 
+def _resolve_device_assignment(device: dict, now: dt.datetime) -> tuple[dict | None, dict | None, str, bool, list[dict]]:
+    """以 Pi 實際使用的規則邏輯選出此刻應顯示的頁面。"""
+    holiday = now.date().isoformat() in set(store.get_holidays())
+    status = _attendance_status(device["user_id"], now.date())
+    rules = [rule for rule in list_rules(device["user_id"]) if rule["device_id"] == device["id"]]
+    matching = [rule for rule in rules if _match_rule(rule, now, holiday, status)]
+    chosen = max(matching, key=lambda rule: rule["priority"], default=None)
+    page = get_page(device["user_id"], chosen["page_id"]) if chosen else None
+    return chosen, page, status, holiday, matching
+
+
+def device_assignment(user_id: str, device_id: str, now: dt.datetime | None = None) -> dict | None:
+    """提供管理台閱讀的設備指派摘要；資料範圍只限於該 owner。"""
+    device = get_device(user_id, device_id)
+    if not device:
+        return None
+    now = now or config.now_local()
+    chosen, page, status, holiday, matching = _resolve_device_assignment(device, now)
+    rules = [rule for rule in list_rules(user_id) if rule["device_id"] == device_id]
+    matching_ids = {rule["id"] for rule in matching}
+    return {
+        "device_id": device_id,
+        "evaluated_at": now.isoformat(timespec="seconds"),
+        "attendance_status": status,
+        "is_holiday": holiday,
+        "active_rule": None if not chosen else {
+            "id": chosen["id"], "name": chosen["name"], "priority": chosen["priority"], "page_id": chosen["page_id"],
+        },
+        "active_page": None if not page else {"id": page["id"], "name": page["name"]},
+        "rules": [{
+            "id": rule["id"], "name": rule["name"], "page_id": rule["page_id"], "priority": rule["priority"],
+            "matches_now": rule["id"] in matching_ids,
+        } for rule in rules],
+    }
+
+
 def _page_layout(device: dict, page: dict | None, now: dt.datetime, *, scene: str | None = None) -> dict:
     """將指定頁面轉為裝置可渲染資料；共用於 Pi layout 與管理端預覽。"""
     from .modules.registry import get_module
@@ -535,11 +571,7 @@ def _page_layout(device: dict, page: dict | None, now: dt.datetime, *, scene: st
 def device_layout(device: dict, now: dt.datetime | None = None) -> dict:
     """為 token 所屬 Pi 建立版面，不透露他人裝置與素材。"""
     now = now or config.now_local()
-    holiday = now.date().isoformat() in set(store.get_holidays())
-    status = _attendance_status(device["user_id"], now.date())
-    rules = [r for r in list_rules(device["user_id"]) if r["device_id"] == device["id"]]
-    chosen = max((r for r in rules if _match_rule(r, now, holiday, status)), key=lambda r: r["priority"], default=None)
-    page = get_page(device["user_id"], chosen["page_id"]) if chosen else None
+    chosen, page, _, _, _ = _resolve_device_assignment(device, now)
     return _page_layout(device, page, now, scene=chosen["name"] if chosen else None)
 
 
