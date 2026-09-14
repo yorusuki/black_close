@@ -1,5 +1,7 @@
 # Cloudflare Tunnel 部署
 
+完整的 Server 建置、秘密設定與驗證流程請見 [Server 建置與部署](../docs/DEPLOY_SERVER.md)。本文件只保留 Tunnel 網路拓撲說明。
+
 本目錄的 Compose 設定不再包含 Caddy，也不發布 host port。Cloudflare Tunnel 已在外部處理使用者端 HTTPS 與公開網域；epagerPi 只在既有 Docker network `cloudflared` 中接受 HTTP 連線。
 
 ## Docker 內網位址
