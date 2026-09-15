@@ -21,6 +21,26 @@ def _headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def display_is_quiet(profile: object, now: datetime.datetime) -> bool:
+    """判定是否位於 Server 下發的畫面靜默時段；格式無效時安全地維持正常刷新。"""
+    settings = profile.get("display_quiet_hours") if isinstance(profile, dict) else None
+    if not isinstance(settings, dict) or settings.get("enabled") is not True:
+        return False
+    if settings.get("pause_weekends", True) is True and now.weekday() >= 5:
+        return True
+    start, end = settings.get("start"), settings.get("end")
+    if not isinstance(start, str) or not isinstance(end, str):
+        return False
+    try:
+        start_time, end_time = datetime.time.fromisoformat(start), datetime.time.fromisoformat(end)
+    except ValueError:
+        return False
+    if start_time == end_time:
+        return False
+    current = now.time()
+    return start_time <= current < end_time if start_time < end_time else current >= start_time or current < end_time
+
+
 def fetch_layout(server_url: str, headers: dict) -> dict:
     response = requests.get(f"{server_url}/api/v1/device/layout", headers=headers, timeout=15)
     response.raise_for_status()
@@ -104,7 +124,8 @@ def sync_assets(server_url: str, headers: dict, resolved: dict) -> None:
 
 
 def run() -> None:
-    from server.render.compositor import render_from_elements
+    from server import config as server_config
+    from server.render.compositor import render_from_elements, reset_device_render_state
 
     cfg = agent_config.load_config()
     server_url, headers = cfg["server_url"], _headers(cfg["device_token"])
@@ -113,6 +134,10 @@ def run() -> None:
     driver = None
     last_poll = 0.0
     last_mode = "none"
+    quiet_active = False
+    quiet_final_frame_pending = False
+    has_displayed_since_start = False
+    last_displayed_layout_id: str | None = None
     log.info("agent 啟動：server=%s，採 device token 驗證", server_url)
     if resolved is not None:
         try:
@@ -124,6 +149,7 @@ def run() -> None:
 
     while True:
         now = time.monotonic()
+        fetched_layout = False
         if resolved is None or now - last_poll >= poll_interval:
             try:
                 fresh_layout = fetch_layout(server_url, headers)
@@ -137,6 +163,7 @@ def run() -> None:
                     log.exception("無法保存離線版面快取，這次仍使用 Server 新版面")
                 resolved = fresh_layout
                 last_poll = now
+                fetched_layout = True
                 sync_assets(server_url, headers, resolved)
                 if driver is None:
                     driver = build_driver(resolved["profile"])
@@ -144,13 +171,41 @@ def run() -> None:
             except (requests.RequestException, ValueError, KeyError):
                 log.exception("無法取得 device layout；保留上一份有效畫面")
 
-        if resolved is not None and driver is not None:
+        wall_now = server_config.now_local()
+        quiet_now = resolved is not None and display_is_quiet(resolved.get("profile"), wall_now)
+        if quiet_now:
+            if not quiet_active:
+                # 若本程式原本正在顯示，保留一個機會讓剛進入靜默的最新
+                # layout（通常是下班頁）寫到面板；冷啟動於靜默時則不喚醒面板。
+                quiet_final_frame_pending = has_displayed_since_start
+                quiet_active = True
+                log.info("進入畫面靜默時段；停止實體面板刷新至設定結束時間")
+        elif quiet_active and resolved is not None:
+            # 靜默期間仍會取回最新版面／素材，但不更新實體面板；恢復時清除記憶，
+            # 使第一張畫面一定全刷，清掉過夜可能殘留的像素。
+            reset_device_render_state(resolved["device_id"])
+            quiet_active = False
+            quiet_final_frame_pending = False
+            log.info("畫面靜默時段結束；將以全刷恢復顯示")
+
+        render_during_quiet_entry = quiet_now and quiet_final_frame_pending and fetched_layout
+        # 週末靜默不是把週末頁永遠卡在前一頁：只要 Server 第一次下發專用週末
+        # layout，就輸出一次。其後即使每日 marker 或文字模組被重新解析，也不再刷新。
+        render_weekend_static_page = (
+            quiet_now and wall_now.weekday() >= 5 and fetched_layout
+            and resolved is not None and resolved.get("layout_id") != last_displayed_layout_id
+        )
+        if resolved is not None and driver is not None and (not quiet_now or render_during_quiet_entry or render_weekend_static_page):
             try:
-                image, meta = render_from_elements(resolved, datetime.datetime.now())
+                image, meta = render_from_elements(resolved, wall_now)
                 last_mode = meta["refresh_mode"]
                 if last_mode != "none":
                     driver.show(image, mode=last_mode, dirty_boxes=meta["dirty_boxes"])
                     log.info("刷新完成：mode=%s dirty=%d", last_mode, len(meta["dirty_boxes"]))
+                has_displayed_since_start = True
+                last_displayed_layout_id = resolved.get("layout_id")
+                if render_during_quiet_entry:
+                    quiet_final_frame_pending = False
             except Exception:
                 log.exception("本機渲染／刷新失敗，將於下一個 tick 重試")
         time.sleep(tick_seconds)
