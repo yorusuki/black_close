@@ -1,11 +1,11 @@
 "use strict";
 
-const state = { csrf: "", modules: [], devices: [], pages: [], rules: [], page: null, savedContentSignature: null, selected: null, inspectorDirty: false, assignment: null, refreshDeviceId: null, activeTab: "overview", layoutView: "canvas", drag: null, canvas: { width: 800, height: 480, scale: 1 } };
+const state = { csrf: "", modules: [], devices: [], pages: [], rules: [], ruleConflicts: [], editingRuleId: null, page: null, savedContentSignature: null, selected: null, inspectorDirty: false, assignment: null, refreshDeviceId: null, activeTab: "overview", layoutView: "canvas", drag: null, canvas: { width: 800, height: 480, scale: 1 } };
 const el = (id) => document.getElementById(id);
 const clone = (value) => value === undefined ? null : JSON.parse(JSON.stringify(value));
 const modelLabel = { waveshare_4in26: "Waveshare 4.26 吋", inky_phat: "Pimoroni Inky pHAT", mock: "Mock 預覽裝置" };
 const categoryLabel = { status: "狀態與時間", data: "數據與進度", visual: "視覺與素材", other: "其他" };
-const requiredElementIds = ["asset-file", "asset-form", "asset-list", "assignment-status", "attendance-form", "attendance-status", "canvas-device", "canvas-meta", "clock-in", "clock-out", "config-fields", "copy-token", "device-form", "device-list", "device-model", "device-name", "element-empty", "element-form", "identity", "layout-canvas", "layout-preview", "leave-note", "load-active-page", "logout", "module-palette", "new-page", "new-page-name", "on-leave", "overview-devices", "page-assignment-status", "page-name", "page-select", "preview-device-name", "preview-empty", "quiet-hours-enabled", "quiet-hours-end", "quiet-hours-fields", "quiet-hours-start", "quiet-weekends", "refresh-data", "refresh-daily-at", "refresh-daily-field", "refresh-device-name", "refresh-dialog", "refresh-interval-field", "refresh-interval-hours", "refresh-mode", "refresh-preview", "remove-element", "rule-attendance", "rule-device", "rule-end", "rule-form", "rule-holiday", "rule-list", "rule-name", "rule-page", "rule-priority", "rule-start", "save-page", "save-refresh", "selected-module-name", "summary-cards", "toast", "token-dialog", "token-value", "weekdays"];
+const requiredElementIds = ["asset-file", "asset-form", "asset-list", "assignment-status", "attendance-form", "attendance-status", "cancel-rule-edit", "canvas-device", "canvas-meta", "clock-in", "clock-out", "config-fields", "copy-token", "device-form", "device-list", "device-model", "device-name", "element-empty", "element-form", "identity", "layout-canvas", "layout-preview", "leave-note", "load-active-page", "logout", "module-palette", "new-page", "new-page-name", "on-leave", "overview-devices", "page-assignment-status", "page-name", "page-select", "preview-device-name", "preview-empty", "quiet-hours-enabled", "quiet-hours-end", "quiet-hours-fields", "quiet-hours-start", "quiet-weekends", "refresh-data", "refresh-daily-at", "refresh-daily-field", "refresh-device-name", "refresh-dialog", "refresh-interval-field", "refresh-interval-hours", "refresh-mode", "refresh-preview", "remove-element", "rule-attendance", "rule-conflict-help", "rule-device", "rule-end", "rule-form", "rule-form-title", "rule-holiday", "rule-list", "rule-name", "rule-page", "rule-priority", "rule-priority-field", "rule-start", "save-page", "save-refresh", "save-rule", "selected-module-name", "summary-cards", "toast", "token-dialog", "token-value", "weekdays"];
 
 async function api(path, options = {}) {
   const headers = new Headers(options.headers || {});
@@ -106,11 +106,14 @@ function renderDevices() { el("device-list").replaceChildren(...state.devices.ma
 
 function renderRules() {
   const devices = new Map(state.devices.map((device) => [device.id, device.name])); const pages = new Map(state.pages.map((page) => [page.id, page.name]));
+  const warnings = new Map(); for (const pair of state.ruleConflicts) { for (const [self, other] of [[pair.left, pair.right], [pair.right, pair.left]]) { if (!warnings.has(self.id)) warnings.set(self.id, []); warnings.get(self.id).push(other); } }
   el("rule-list").replaceChildren(...state.rules.map((rule) => {
-    const row = document.createElement("article"); row.className = "list-row"; const days = rule.weekdays.length ? rule.weekdays.map((day) => "一二三四五六日"[day]).join("、") : "每天";
-    const text = document.createElement("div"); const title = document.createElement("h3"); title.textContent = rule.name; const detail = document.createElement("p"); detail.textContent = `${devices.get(rule.device_id) || "已移除設備"} · ${pages.get(rule.page_id) || "已移除頁面"} · 優先 ${rule.priority} · ${days}`; text.append(title, detail);
+    const row = document.createElement("article"); row.className = "list-row";
+    const text = document.createElement("div"); const title = document.createElement("h3"); title.textContent = rule.name; const detail = document.createElement("p"); detail.textContent = `${devices.get(rule.device_id) || "已移除設備"} · ${pages.get(rule.page_id) || "已移除頁面"}`; const condition = document.createElement("p"); condition.textContent = ruleConditionSummary(rule); text.append(title, detail, condition);
+    const overlaps = warnings.get(rule.id) || []; if (overlaps.length) { const warning = document.createElement("p"); warning.className = "rule-conflict"; warning.textContent = `時段衝突：${overlaps.map((item) => `「${item.name}」（優先 ${item.priority}）`).join("、")}；請用不同優先序決定顯示。`; text.append(warning); }
+    const edit = document.createElement("button"); edit.className = "button button-secondary"; edit.type = "button"; edit.textContent = "編輯"; edit.onclick = () => { state.editingRuleId = rule.id; el("rule-form-title").textContent = `編輯規則：${rule.name}`; el("save-rule").textContent = "儲存規則"; el("cancel-rule-edit").hidden = false; el("rule-name").value = rule.name; el("rule-device").value = rule.device_id; syncRulePageOptions(); el("rule-page").value = rule.page_id; el("rule-priority").value = String(rule.priority); el("rule-start").value = rule.start_time || ""; el("rule-end").value = rule.end_time || ""; el("rule-attendance").value = rule.attendance_status || ""; el("rule-holiday").value = rule.holiday === null ? "" : String(rule.holiday); el("weekdays").querySelectorAll("input").forEach((box) => { box.checked = rule.weekdays.includes(Number(box.value)); }); updateRuleConflictHelp(); switchTab("rules"); };
     const remove = document.createElement("button"); remove.className = "button button-danger"; remove.type = "button"; remove.textContent = "刪除"; remove.onclick = async () => { if (!confirm(`刪除規則「${rule.name}」？`)) return; try { await api(`/api/workspace/rules/${rule.id}`, { method: "DELETE" }); await refresh(); await loadDeviceAssignment(); notify("規則已刪除，已重新判定目前套用頁面"); } catch (error) { message(error); } };
-    row.append(text, remove); return row;
+    const actions = document.createElement("div"); actions.className = "button-row"; actions.append(edit, remove); row.append(text, actions); return row;
   }));
 }
 
@@ -134,6 +137,51 @@ function syncRulePageOptions() {
   const device = state.devices.find((entry) => entry.id === el("rule-device").value);
   option(el("rule-page"), pagesForDevice(device), (page) => page.name);
 }
+function ruleFormData() {
+  return {
+    device_id: el("rule-device").value, page_id: el("rule-page").value,
+    start_time: el("rule-start").value || null, end_time: el("rule-end").value || null,
+    attendance_status: el("rule-attendance").value || null,
+    holiday: el("rule-holiday").value === "" ? null : el("rule-holiday").value === "true",
+    weekdays: [...el("weekdays").querySelectorAll("input:checked")].map((box) => Number(box.value)),
+  };
+}
+function ruleRangesOverlap(left, right) {
+  const ranges = (rule) => {
+    if (!rule.start_time || !rule.end_time) return [[0, 1440]];
+    const minutes = (value) => { const [hour, minute] = value.split(":").map(Number); return hour * 60 + minute; };
+    const start = minutes(rule.start_time); const end = minutes(rule.end_time);
+    return start <= end ? [[start, end]] : [[start, 1440], [0, end]];
+  };
+  return ranges(left).some(([leftStart, leftEnd]) => ranges(right).some(([rightStart, rightEnd]) => Math.max(leftStart, rightStart) <= Math.min(leftEnd, rightEnd)));
+}
+function rulesCouldOverlap(left, right) {
+  if (!left.device_id || left.device_id !== right.device_id || left.page_id === right.page_id) return false;
+  const leftDays = new Set(left.weekdays?.length ? left.weekdays : [0, 1, 2, 3, 4, 5, 6]);
+  const rightDays = new Set(right.weekdays?.length ? right.weekdays : [0, 1, 2, 3, 4, 5, 6]);
+  if (![...leftDays].some((day) => rightDays.has(day))) return false;
+  if (left.attendance_status && right.attendance_status && left.attendance_status !== right.attendance_status) return false;
+  if (left.holiday !== null && right.holiday !== null && left.holiday !== right.holiday) return false;
+  return ruleRangesOverlap(left, right);
+}
+function updateRuleConflictHelp() {
+  const candidate = ruleFormData(); const priorityField = el("rule-priority-field"); const hint = el("rule-conflict-help");
+  const conflicts = state.rules.filter((rule) => rule.id !== state.editingRuleId && rulesCouldOverlap(candidate, rule));
+  priorityField.hidden = conflicts.length === 0;
+  if (!conflicts.length) {
+    hint.textContent = "目前時段沒有和其他頁面重疊，優先序不會影響顯示。一般工作頁可維持最低值 0。";
+    return;
+  }
+  const names = conflicts.map((rule) => `「${rule.name}」`).join("、");
+  hint.textContent = `時段會與 ${names} 同時符合；請用不同優先序決定顯示。建議工作頁為 0，午休 10，下班 20，請假 30，週末／假日 40。`;
+}
+function ruleConditionSummary(rule) {
+  const days = rule.weekdays.length ? rule.weekdays.map((day) => "一二三四五六日"[day]).join("、") : "每天";
+  const period = rule.start_time && rule.end_time ? `${rule.start_time}–${rule.end_time}` : "全天";
+  const attendance = { pending: "未打卡", working: "上班中", off_work: "已下班", leave: "請假" }[rule.attendance_status] || "不限出勤";
+  const holiday = rule.holiday === null ? "不限假日" : (rule.holiday ? "僅假日" : "僅非假日");
+  return `${days} · ${period} · ${attendance} · ${holiday}`;
+}
 function renderAssignment() {
   const device = editorDevice(); const assignment = state.assignment?.device_id === device?.id ? state.assignment : null;
   const status = el("assignment-status"); const pageStatus = el("page-assignment-status"); const load = el("load-active-page"); const previewName = el("preview-device-name");
@@ -149,7 +197,7 @@ function renderAssignment() {
     load.disabled = true;
     return;
   }
-  status.textContent = `目前套用「${activePage.name}」：規則「${active.name}」（優先序 ${active.priority}，出勤：${attendance}）。`;
+  status.textContent = `目前套用「${activePage.name}」：規則「${active.name}」（出勤：${attendance}）。${assignment.selection_reason || ""}`;
   load.disabled = false;
   if (state.page?.id === activePage.id) pageStatus.textContent = "這就是目前套用到此 Pi 的頁面；儲存後，Pi 下次向 Server 取得版面時會使用新內容。";
   else if (assignment.rules.some((rule) => rule.page_id === state.page?.id)) pageStatus.textContent = "此頁面已指派給該 Pi，但目前條件不符合；現在正在套用另一頁。";
@@ -407,8 +455,8 @@ function openRefreshSettings(device) {
 }
 
 async function refresh(loadSelected = true) {
-  const currentPageId = state.page?.id; [state.devices, state.pages, state.rules] = await Promise.all([api("/api/workspace/devices"), api("/api/workspace/pages"), api("/api/workspace/rules")]);
-  const activeDevices = state.devices.filter((device) => !device.hidden); option(el("canvas-device"), state.devices, (device) => device.name); option(el("rule-device"), activeDevices, (device) => device.name); syncPageOptions(); syncRulePageOptions();
+  const currentPageId = state.page?.id; [state.devices, state.pages, state.rules, state.ruleConflicts] = await Promise.all([api("/api/workspace/devices"), api("/api/workspace/pages"), api("/api/workspace/rules"), api("/api/workspace/rules/conflicts")]);
+  const activeDevices = state.devices.filter((device) => !device.hidden); option(el("canvas-device"), state.devices, (device) => device.name); option(el("rule-device"), activeDevices, (device) => device.name); syncPageOptions(); syncRulePageOptions(); updateRuleConflictHelp();
   renderSummary(); renderDevices(); renderRules(); renderModulePalette();
   if (loadSelected && currentPageId && state.pages.some((page) => page.id === currentPageId)) await loadPage(currentPageId);
   else if (loadSelected && !state.page && state.pages[0]) await loadPage(state.pages[0].id);
@@ -418,9 +466,10 @@ function bindEvents() {
   document.querySelectorAll(".tab").forEach((tab) => tab.addEventListener("click", () => switchTab(tab.dataset.tab))); document.querySelectorAll("[data-open-tab]").forEach((button) => button.addEventListener("click", () => switchTab(button.dataset.openTab))); document.querySelectorAll("[data-layout-view]").forEach((tab) => tab.addEventListener("click", () => switchLayoutView(tab.dataset.layoutView)));
   el("device-form").onsubmit = async (event) => { event.preventDefault(); try { const result = await api("/api/workspace/devices", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: el("device-name").value, model_id: el("device-model").value }) }); el("device-name").value = ""; await refresh(); showToken(result.token); notify("設備已建立"); } catch (error) { message(error); } };
   el("new-page").onclick = async () => { try { const device = editorDevice(); if (!device) throw new Error("請先選擇要建立版型的 Pi"); const page = await api("/api/workspace/pages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: el("new-page-name").value, model_id: device.model_id }) }); el("new-page-name").value = ""; state.page = page; state.savedContentSignature = contentSignature(page.content); await refresh(false); renderPage(); switchTab("layouts"); notify("新頁面已建立，僅可用於目前面板型號"); } catch (error) { message(error); } };
-  el("page-select").onchange = () => loadPage(el("page-select").value).catch(message); el("save-page").onclick = savePage; el("canvas-device").onchange = async () => { try { await loadDeviceAssignment(true); if (!state.assignment?.active_page) { const fallback = pagesForDevice(editorDevice())[0]; if (fallback) await loadPage(fallback.id); } renderPage(); } catch (error) { message(error); } }; el("rule-device").onchange = syncRulePageOptions; el("load-active-page").onclick = () => { const pageId = state.assignment?.active_page?.id; if (pageId) loadPage(pageId).catch(message); }; el("refresh-preview").onclick = updatePreview; el("element-form").onsubmit = applyElement; el("element-form").addEventListener("input", () => { state.inspectorDirty = true; }); el("element-form").addEventListener("change", () => { state.inspectorDirty = true; });
+  el("page-select").onchange = () => loadPage(el("page-select").value).catch(message); el("save-page").onclick = savePage; el("canvas-device").onchange = async () => { try { await loadDeviceAssignment(true); if (!state.assignment?.active_page) { const fallback = pagesForDevice(editorDevice())[0]; if (fallback) await loadPage(fallback.id); } renderPage(); } catch (error) { message(error); } }; el("rule-device").onchange = () => { syncRulePageOptions(); updateRuleConflictHelp(); }; ["rule-page", "rule-start", "rule-end", "rule-attendance", "rule-holiday", "weekdays"].forEach((id) => el(id).addEventListener("change", updateRuleConflictHelp)); el("load-active-page").onclick = () => { const pageId = state.assignment?.active_page?.id; if (pageId) loadPage(pageId).catch(message); }; el("refresh-preview").onclick = updatePreview; el("element-form").onsubmit = applyElement; el("element-form").addEventListener("input", () => { state.inspectorDirty = true; }); el("element-form").addEventListener("change", () => { state.inspectorDirty = true; });
   el("remove-element").onclick = () => { const item = selectedElement(); if (!item || !confirm("刪除此元件？")) return; state.page.content.elements = state.page.content.elements.filter((entry) => entry.instance_id !== item.instance_id); state.selected = null; renderPage(); notify("元件已刪除，記得儲存"); };
-  el("rule-form").onsubmit = async (event) => { event.preventDefault(); try { await api("/api/workspace/rules", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: el("rule-name").value, device_id: el("rule-device").value, page_id: el("rule-page").value, priority: Number(el("rule-priority").value), start_time: el("rule-start").value || null, end_time: el("rule-end").value || null, attendance_status: el("rule-attendance").value || null, holiday: el("rule-holiday").value === "" ? null : el("rule-holiday").value === "true", weekdays: [...el("weekdays").querySelectorAll("input:checked")].map((box) => Number(box.value)) }) }); event.target.reset(); await refresh(); await loadDeviceAssignment(); notify("規則已新增，已重新判定目前套用頁面"); } catch (error) { message(error); } };
+  el("rule-form").onsubmit = async (event) => { event.preventDefault(); try { const payload = { name: el("rule-name").value, priority: Number(el("rule-priority").value), ...ruleFormData() }; const editing = state.editingRuleId; await api(editing ? `/api/workspace/rules/${encodeURIComponent(editing)}` : "/api/workspace/rules", { method: editing ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }); state.editingRuleId = null; event.target.reset(); el("rule-form-title").textContent = "新增規則"; el("save-rule").textContent = "新增規則"; el("cancel-rule-edit").hidden = true; await refresh(); await loadDeviceAssignment(); notify(editing ? "規則已更新，已重新判定目前套用頁面" : "規則已新增，已重新判定目前套用頁面"); } catch (error) { message(error); } };
+  el("cancel-rule-edit").onclick = () => { state.editingRuleId = null; el("rule-form").reset(); el("rule-form-title").textContent = "新增規則"; el("save-rule").textContent = "新增規則"; el("cancel-rule-edit").hidden = true; syncRulePageOptions(); updateRuleConflictHelp(); };
   el("asset-form").onsubmit = async (event) => { event.preventDefault(); try { const data = new FormData(); data.append("file", el("asset-file").files[0]); await api("/api/workspace/assets", { method: "POST", body: data }); event.target.reset(); await loadAssets(); notify("圖片已上傳"); } catch (error) { message(error); } };
   el("attendance-form").onsubmit = async (event) => { event.preventDefault(); try { await api("/api/workspace/attendance/today", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clock_in: el("clock-in").value || null, clock_out: el("clock-out").value || null, on_leave: el("on-leave").checked, leave_note: el("leave-note").value }) }); await loadAttendance(); await loadDeviceAssignment(); notify("出勤資料已儲存，已重新判定目前 Pi 頁面"); } catch (error) { message(error); } };
   el("refresh-data").onclick = async () => { try { await refresh(); notify("資料已重新整理"); } catch (error) { message(error); } };

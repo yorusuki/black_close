@@ -130,6 +130,12 @@ def list_rules():
     return jsonify(workspace_store.list_rules(_user_id()))
 
 
+@bp.get("/rules/conflicts")
+@auth.require_user
+def list_rule_conflicts():
+    return jsonify(workspace_store.list_rule_conflicts(_user_id()))
+
+
 @bp.post("/rules")
 @auth.require_user
 def create_rule():
@@ -137,6 +143,16 @@ def create_rule():
         return jsonify(workspace_store.create_rule(_user_id(), request.get_json(force=False))), 201
     except ValueError as exc:
         return jsonify({"error": "invalid_rule", "message": str(exc)}), 400
+
+
+@bp.put("/rules/<rule_id>")
+@auth.require_user
+def update_rule(rule_id):
+    try:
+        rule = workspace_store.update_rule(_user_id(), rule_id, request.get_json(force=False))
+    except ValueError as exc:
+        return jsonify({"error": "invalid_rule", "message": str(exc)}), 400
+    return jsonify(rule) if rule else (jsonify({"error": "not_found"}), 404)
 
 
 @bp.delete("/rules/<rule_id>")

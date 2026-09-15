@@ -899,14 +899,87 @@ def list_rules(user_id: str) -> list[dict]:
         return [_public_rule(row) for row in con.execute("SELECT * FROM rules WHERE user_id=? ORDER BY priority DESC, name", (user_id,))]
 
 
+def _minutes(value: str) -> int:
+    parsed = dt.time.fromisoformat(value)
+    return parsed.hour * 60 + parsed.minute
+
+
+def _time_ranges_overlap(left: dict, right: dict) -> bool:
+    """比較可能跨午夜的規則時段；未填完整時段視為全天。"""
+    def ranges(rule: dict) -> list[tuple[int, int]]:
+        start, end = rule.get("start_time"), rule.get("end_time")
+        if not start or not end:
+            return [(0, 1440)]
+        a, b = _minutes(start), _minutes(end)
+        return [(a, b)] if a <= b else [(a, 1440), (0, b)]
+    return any(max(a1, b1) <= min(a2, b2) for a1, a2 in ranges(left) for b1, b2 in ranges(right))
+
+
+def _rules_overlap(left: dict, right: dict) -> bool:
+    """判斷兩條規則是否可能在同一刻同時匹配，供 UI 與寫入驗證共用。"""
+    if not left.get("enabled", True) or not right.get("enabled", True) or left.get("device_id") != right.get("device_id"):
+        return False
+    left_days, right_days = set(left.get("weekdays") or range(7)), set(right.get("weekdays") or range(7))
+    if not left_days & right_days:
+        return False
+    left_status, right_status = left.get("attendance_status"), right.get("attendance_status")
+    if left_status and right_status and left_status != right_status:
+        return False
+    left_holiday, right_holiday = left.get("holiday"), right.get("holiday")
+    if left_holiday is not None and right_holiday is not None and left_holiday != right_holiday:
+        return False
+    return _time_ranges_overlap(left, right)
+
+
+def rule_conflicts(user_id: str, candidate: dict, *, exclude_rule_id: str | None = None) -> list[dict]:
+    """回傳會輸出不同頁面的重疊規則；同頁重複不需要設定優先序。"""
+    conflicts = []
+    for rule in list_rules(user_id):
+        if rule["id"] == exclude_rule_id or rule["page_id"] == candidate["page_id"]:
+            continue
+        if _rules_overlap(rule, candidate):
+            conflicts.append({"id": rule["id"], "name": rule["name"], "page_id": rule["page_id"], "priority": rule["priority"]})
+    return conflicts
+
+
+def list_rule_conflicts(user_id: str) -> list[dict]:
+    rules = list_rules(user_id)
+    result = []
+    for index, rule in enumerate(rules):
+        for other in rules[index + 1:]:
+            if rule["page_id"] != other["page_id"] and _rules_overlap(rule, other):
+                result.append({"left": {key: rule[key] for key in ("id", "name", "page_id", "priority")},
+                               "right": {key: other[key] for key in ("id", "name", "page_id", "priority")}})
+    return result
+
+
 def create_rule(user_id: str, data: Any) -> dict:
     rule, identifier = _validate_rule(user_id, data), str(uuid.uuid4())
+    conflicts = rule_conflicts(user_id, rule)
+    if any(conflict["priority"] == rule["priority"] for conflict in conflicts):
+        raise ValueError("此時段與既有規則衝突且優先序相同；請設定不同優先序")
     with _db() as con:
         con.execute("""INSERT INTO rules(id,user_id,device_id,page_id,name,priority,weekdays_json,start_time,end_time,attendance_status,holiday,enabled)
                        VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (identifier, user_id, rule["device_id"], rule["page_id"], rule["name"], rule["priority"], _json(rule["weekdays"]),
                      rule["start_time"], rule["end_time"], rule["attendance_status"], rule["holiday"], rule["enabled"]))
         return _public_rule(con.execute("SELECT * FROM rules WHERE id=?", (identifier,)).fetchone())
+
+
+def update_rule(user_id: str, rule_id: str, data: Any) -> dict | None:
+    rule = _validate_rule(user_id, data)
+    if not any(existing["id"] == rule_id for existing in list_rules(user_id)):
+        return None
+    conflicts = rule_conflicts(user_id, rule, exclude_rule_id=rule_id)
+    if any(conflict["priority"] == rule["priority"] for conflict in conflicts):
+        raise ValueError("此時段與既有規則衝突且優先序相同；請設定不同優先序")
+    with _db() as con:
+        con.execute("""UPDATE rules SET device_id=?,page_id=?,name=?,priority=?,weekdays_json=?,start_time=?,end_time=?,
+                       attendance_status=?,holiday=?,enabled=? WHERE id=? AND user_id=?""",
+                    (rule["device_id"], rule["page_id"], rule["name"], rule["priority"], _json(rule["weekdays"]),
+                     rule["start_time"], rule["end_time"], rule["attendance_status"], rule["holiday"], rule["enabled"], rule_id, user_id))
+        row = con.execute("SELECT * FROM rules WHERE id=? AND user_id=?", (rule_id, user_id)).fetchone()
+    return _public_rule(row) if row else None
 
 
 def delete_rule(user_id: str, rule_id: str) -> bool:
@@ -1002,8 +1075,13 @@ def _resolve_device_assignment(device: dict, now: dt.datetime) -> tuple[dict | N
     holiday = now.date().isoformat() in set(store.get_holidays())
     status, auto_off_work = _effective_attendance_status(device["user_id"], now, holiday)
     rules = [rule for rule in list_rules(device["user_id"]) if rule["device_id"] == device["id"]]
-    matching = [rule for rule in rules if _match_rule(rule, now, holiday, status)]
-    chosen = max(matching, key=lambda rule: rule["priority"], default=None)
+    # New edits reject same-priority overlaps. Older rules may still have one,
+    # so keep the fallback deterministic and explain it in device_assignment.
+    matching = sorted(
+        (rule for rule in rules if _match_rule(rule, now, holiday, status)),
+        key=lambda rule: (-int(rule["priority"]), rule["name"], rule["id"]),
+    )
+    chosen = matching[0] if matching else None
     page = get_page(device["user_id"], chosen["page_id"]) if chosen else None
     return chosen, page, status, holiday, auto_off_work, matching
 
@@ -1017,6 +1095,24 @@ def device_assignment(user_id: str, device_id: str, now: dt.datetime | None = No
     chosen, page, status, holiday, auto_off_work, matching = _resolve_device_assignment(device, now)
     rules = [rule for rule in list_rules(user_id) if rule["device_id"] == device_id]
     matching_ids = {rule["id"] for rule in matching}
+    alternatives = [rule for rule in matching if chosen and rule["id"] != chosen["id"] and rule["page_id"] != chosen["page_id"]]
+    same_priority = [rule for rule in alternatives if chosen and rule["priority"] == chosen["priority"]]
+    if not chosen:
+        selection_reason = "目前沒有規則同時符合日期、時段與出勤條件。"
+    elif same_priority:
+        selection_reason = (
+            f"目前有 {len(matching)} 條規則符合；「{chosen['name']}」與 "
+            f"{len(same_priority)} 條不同頁面規則優先序相同，暫以規則名稱排序。請在顯示規則修正衝突。"
+        )
+    elif alternatives:
+        selection_reason = (
+            f"目前有 {len(matching)} 條規則符合；「{chosen['name']}」的優先序 {chosen['priority']} "
+            f"高於其他重疊頁面，因此套用此頁。"
+        )
+    elif len(matching) > 1:
+        selection_reason = f"目前有 {len(matching)} 條規則符合，但都指向同一頁，不需要比較優先序。"
+    else:
+        selection_reason = f"目前只有「{chosen['name']}」符合日期、時段與出勤條件。"
     return {
         "device_id": device_id,
         "evaluated_at": now.isoformat(timespec="seconds"),
@@ -1027,6 +1123,7 @@ def device_assignment(user_id: str, device_id: str, now: dt.datetime | None = No
             "id": chosen["id"], "name": chosen["name"], "priority": chosen["priority"], "page_id": chosen["page_id"],
         },
         "active_page": None if not page else {"id": page["id"], "name": page["name"]},
+        "selection_reason": selection_reason,
         "rules": [{
             "id": rule["id"], "name": rule["name"], "page_id": rule["page_id"], "priority": rule["priority"],
             "matches_now": rule["id"] in matching_ids,
