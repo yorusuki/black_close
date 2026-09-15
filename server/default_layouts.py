@@ -68,6 +68,35 @@ _WAVESHARE_OFF_WORK_LAYOUT = {
 }
 
 
+_WAVESHARE_LUNCH_LAYOUT = {
+    "elements": [
+        {
+            "instance_id": "clock-bar-lunch", "module_id": "clock_bar",
+            "x": 0, "y": 0, "w": 800, "h": 48, "z": 10, "refresh_interval": 20,
+            "refresh_policy": "partial", "config": {"time_format": "%H:%M"},
+        },
+        {
+            "instance_id": "mascot-lunch-main", "module_id": "mascot",
+            "x": 32, "y": 88, "w": 736, "h": 312, "z": 1, "refresh_interval": 12,
+            "refresh_policy": "partial",
+            "config": {
+                "interval_seconds": 12,
+                "frames": [
+                    {"art": " /\\_/\\\n( =^.^= )\n /|___|\\", "line": "吃飯皇帝大，訊息等朕吃飽再說。"},
+                    {"art": " /\\_/\\\n( o.o )\n /|___|\\", "line": "午休中：筷子優先於所有待辦。"},
+                    {"art": " /\\_/\\\n( -.- ) z\n > ^ <", "line": "飯後發呆是正常的系統維護。"},
+                    {"art": " /\\_/\\\n( ^.^ )\n /|___|\\", "line": "吃飽才有力氣繼續假裝很忙。"},
+                    {"art": " /\\_/\\\n( =.= )\n > ^ <", "line": "會議可以等，湯冷掉不行。"},
+                    {"art": " /\\_/\\\n( -_- )\n /   \\", "line": "午休剩下的時間，交給放空處理。"},
+                    {"art": " /\\_/\\\n( o_o )\n > ^ <~~", "line": "已讀午餐菜單，下午再回覆工作。"},
+                    {"art": " /\\_/\\\n( ^o^ )\n > ^ <", "line": "今天的 KPI：把午餐好好吃完。"},
+                ],
+            },
+        },
+    ],
+}
+
+
 def waveshare_work_layout() -> dict:
     """回傳可安全修改的新版 4.26 吋工作頁副本。"""
     return deepcopy(_WAVESHARE_WORK_LAYOUT)
@@ -76,3 +105,8 @@ def waveshare_work_layout() -> dict:
 def waveshare_off_work_layout() -> dict:
     """回傳 4.26 吋下班頁的可輪播預設版型副本。"""
     return deepcopy(_WAVESHARE_OFF_WORK_LAYOUT)
+
+
+def waveshare_lunch_layout() -> dict:
+    """回傳 4.26 吋平日午休頁的可編輯副本。"""
+    return deepcopy(_WAVESHARE_LUNCH_LAYOUT)

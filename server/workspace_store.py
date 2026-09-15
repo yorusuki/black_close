@@ -27,6 +27,7 @@ _WORK_LAYOUT_MASCOT_INTERVAL_UPGRADE_KEY = "waveshare_work_layout_mascot_interva
 _REFRESH_POLICY_UPGRADE_KEY = "waveshare_refresh_policy_v2"
 _OFF_WORK_LAYOUT_UPGRADE_KEY = "waveshare_off_work_greetings_v1"
 _REFRESH_POLICY_DAILY_DEFAULT_UPGRADE_KEY = "waveshare_refresh_daily_default_v3"
+_LUNCH_PAGE_UPGRADE_KEY = "waveshare_lunch_page_v1"
 _ONLINE_AFTER_SECONDS = 180
 
 
@@ -320,6 +321,62 @@ def upgrade_default_off_work_layout() -> int:
             (_OFF_WORK_LAYOUT_UPGRADE_KEY, str(updated)),
         )
         return updated
+
+
+def ensure_default_lunch_pages() -> dict[str, int]:
+    """為既有 4.26 吋設備補建平日午休頁與規則。
+
+    午休頁只在「上班中」且平日 12:00–13:10 套用，因此不會蓋掉請假、下班或
+    假日頁。既有同名午休頁會優先沿用，避免重複建立使用者已客製的內容。
+    """
+    from .default_layouts import waveshare_lunch_layout
+
+    page_name = "午休頁"
+    rule_name = "平日午休（12:00–13:10）"
+    result = {"pages": 0, "rules": 0}
+    with _db() as con:
+        done = con.execute("SELECT 1 FROM schema_metadata WHERE key=?", (_LUNCH_PAGE_UPGRADE_KEY,)).fetchone()
+        if done:
+            return result
+        devices = con.execute(
+            "SELECT id,user_id FROM devices WHERE model_id='waveshare_4in26' AND hidden=0"
+        ).fetchall()
+        pages_by_user: dict[str, str] = {}
+        for device in devices:
+            user_id = device["user_id"]
+            page_id = pages_by_user.get(user_id)
+            if page_id is None:
+                existing = con.execute(
+                    "SELECT id FROM pages WHERE user_id=? AND name=? AND template_id=? ORDER BY created_at LIMIT 1",
+                    (user_id, page_name, "model:waveshare_4in26"),
+                ).fetchone()
+                if existing:
+                    page_id = existing["id"]
+                else:
+                    page_id = str(uuid.uuid4())
+                    con.execute(
+                        "INSERT INTO pages(id,user_id,name,template_id,content_json) VALUES(?,?,?,?,?)",
+                        (page_id, user_id, page_name, "model:waveshare_4in26", _json(waveshare_lunch_layout())),
+                    )
+                    result["pages"] += 1
+                pages_by_user[user_id] = page_id
+            existing_rule = con.execute(
+                "SELECT 1 FROM rules WHERE device_id=? AND name=?", (device["id"], rule_name)
+            ).fetchone()
+            if existing_rule:
+                continue
+            con.execute(
+                """INSERT INTO rules(id,user_id,device_id,page_id,name,priority,weekdays_json,start_time,end_time,
+                                     attendance_status,holiday,enabled)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    str(uuid.uuid4()), user_id, device["id"], page_id, rule_name, 100,
+                    _json([0, 1, 2, 3, 4]), "12:00", "13:10", "working", 0, 1,
+                ),
+            )
+            result["rules"] += 1
+        con.execute("INSERT INTO schema_metadata(key,value) VALUES(?,?)", (_LUNCH_PAGE_UPGRADE_KEY, _json(result)))
+    return result
 
 
 def upgrade_default_refresh_policy() -> int:
