@@ -5,7 +5,7 @@ const el = (id) => document.getElementById(id);
 const clone = (value) => value === undefined ? null : JSON.parse(JSON.stringify(value));
 const modelLabel = { waveshare_4in26: "Waveshare 4.26 吋", inky_phat: "Pimoroni Inky pHAT", mock: "Mock 預覽裝置" };
 const categoryLabel = { status: "狀態與時間", data: "數據與進度", visual: "視覺與素材", other: "其他" };
-const requiredElementIds = ["asset-file", "asset-form", "asset-list", "assignment-status", "attendance-form", "attendance-status", "canvas-device", "canvas-meta", "clock-in", "clock-out", "config-fields", "copy-token", "device-form", "device-list", "device-model", "device-name", "element-empty", "element-form", "identity", "layout-canvas", "layout-preview", "leave-note", "load-active-page", "logout", "module-palette", "new-page", "new-page-name", "on-leave", "overview-devices", "page-assignment-status", "page-name", "page-select", "preview-device-name", "preview-empty", "refresh-data", "refresh-daily-at", "refresh-daily-field", "refresh-device-name", "refresh-dialog", "refresh-interval-field", "refresh-interval-hours", "refresh-mode", "refresh-preview", "remove-element", "rule-attendance", "rule-device", "rule-end", "rule-form", "rule-holiday", "rule-list", "rule-name", "rule-page", "rule-priority", "rule-start", "save-page", "save-refresh", "selected-module-name", "summary-cards", "toast", "token-dialog", "token-value", "weekdays"];
+const requiredElementIds = ["asset-file", "asset-form", "asset-list", "assignment-status", "attendance-form", "attendance-status", "canvas-device", "canvas-meta", "clock-in", "clock-out", "config-fields", "copy-token", "device-form", "device-list", "device-model", "device-name", "element-empty", "element-form", "identity", "layout-canvas", "layout-preview", "leave-note", "load-active-page", "logout", "module-palette", "new-page", "new-page-name", "on-leave", "overview-devices", "page-assignment-status", "page-name", "page-select", "preview-device-name", "preview-empty", "quiet-hours-enabled", "quiet-hours-end", "quiet-hours-fields", "quiet-hours-start", "quiet-weekends", "refresh-data", "refresh-daily-at", "refresh-daily-field", "refresh-device-name", "refresh-dialog", "refresh-interval-field", "refresh-interval-hours", "refresh-mode", "refresh-preview", "remove-element", "rule-attendance", "rule-device", "rule-end", "rule-form", "rule-holiday", "rule-list", "rule-name", "rule-page", "rule-priority", "rule-start", "save-page", "save-refresh", "selected-module-name", "summary-cards", "toast", "token-dialog", "token-value", "weekdays"];
 
 async function api(path, options = {}) {
   const headers = new Headers(options.headers || {});
@@ -390,13 +390,20 @@ function showToken(token) { el("token-value").textContent = token; el("token-dia
 function syncRefreshFields() {
   const daily = el("refresh-mode").value === "daily";
   el("refresh-interval-field").hidden = daily; el("refresh-daily-field").hidden = !daily;
+  el("quiet-hours-fields").hidden = !el("quiet-hours-enabled").checked;
 }
 function openRefreshSettings(device) {
   state.refreshDeviceId = device.id; const profile = device.profile || {}; const dailyAt = profile.server_full_refresh_daily_at;
   el("refresh-device-name").textContent = `${device.name}（${modelLabel[device.model_id] || device.model_id}）`;
   el("refresh-mode").value = dailyAt ? "daily" : "interval";
   el("refresh-interval-hours").value = String((Number(profile.full_refresh_interval_seconds) || 1200) / 3600);
-  el("refresh-daily-at").value = dailyAt || "12:00"; syncRefreshFields(); el("refresh-dialog").showModal();
+  el("refresh-daily-at").value = dailyAt || "12:00";
+  const quiet = profile.display_quiet_hours || { enabled: true, start: "20:00", end: "08:30", pause_weekends: true };
+  el("quiet-hours-enabled").checked = quiet.enabled === true;
+  el("quiet-hours-start").value = quiet.start || "20:00";
+  el("quiet-hours-end").value = quiet.end || "08:30";
+  el("quiet-weekends").checked = quiet.pause_weekends !== false;
+  syncRefreshFields(); el("refresh-dialog").showModal();
 }
 
 async function refresh(loadSelected = true) {
@@ -420,8 +427,8 @@ function bindEvents() {
   el("logout").onclick = async () => { try { await api("/auth/logout", { method: "POST" }); location.reload(); } catch (error) { message(error); } };
   el("copy-token").onclick = async () => { try { await navigator.clipboard.writeText(el("token-value").textContent); notify("token 已複製"); } catch { notify("無法自動複製，請手動選取 token", true); } };
   el("token-dialog").addEventListener("close", () => { el("token-value").textContent = ""; });
-  el("refresh-mode").onchange = syncRefreshFields;
-  el("save-refresh").onclick = async () => { try { if (!state.refreshDeviceId) throw new Error("找不到要設定的 Pi"); const mode = el("refresh-mode").value; const refreshPayload = mode === "daily" ? { mode, daily_at: el("refresh-daily-at").value } : { mode, interval_seconds: Math.round(Number(el("refresh-interval-hours").value) * 3600) }; await api(`/api/workspace/devices/${encodeURIComponent(state.refreshDeviceId)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ refresh: refreshPayload }) }); el("refresh-dialog").close(); await refresh(); notify(mode === "daily" ? "已設定每日指定時間全刷，其餘時間局刷" : "已更新全刷間隔，其餘時間局刷"); } catch (error) { message(error); } };
+  el("refresh-mode").onchange = syncRefreshFields; el("quiet-hours-enabled").onchange = syncRefreshFields;
+  el("save-refresh").onclick = async () => { try { if (!state.refreshDeviceId) throw new Error("找不到要設定的 Pi"); const mode = el("refresh-mode").value; const quietHours = { enabled: el("quiet-hours-enabled").checked, start: el("quiet-hours-start").value, end: el("quiet-hours-end").value, pause_weekends: el("quiet-weekends").checked }; const refreshPayload = mode === "daily" ? { mode, daily_at: el("refresh-daily-at").value, quiet_hours: quietHours } : { mode, interval_seconds: Math.round(Number(el("refresh-interval-hours").value) * 3600), quiet_hours: quietHours }; await api(`/api/workspace/devices/${encodeURIComponent(state.refreshDeviceId)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ refresh: refreshPayload }) }); el("refresh-dialog").close(); await refresh(); notify(quietHours.enabled ? "刷新設定已更新；靜默時段會停止面板輸出" : "刷新設定已更新；未啟用靜默時段"); } catch (error) { message(error); } };
   el("refresh-dialog").addEventListener("close", () => { state.refreshDeviceId = null; });
 }
 

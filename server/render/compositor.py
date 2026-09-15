@@ -50,6 +50,14 @@ _partial_count_since_full: dict[str, int] = {}
 _last_layout_signature: dict[str, str] = {}
 
 
+def reset_device_render_state(device_id: str) -> None:
+    """清除單台面板的刷新歷史，讓靜默時段結束後下一張畫面必定全刷。"""
+    _last_full_refresh.pop(device_id, None)
+    _last_scheduled_full_day.pop(device_id, None)
+    _partial_count_since_full.pop(device_id, None)
+    _last_layout_signature.pop(device_id, None)
+
+
 def _error_placeholder(size, message: str) -> Image.Image:
     img = Image.new("RGB", size, "white")
     draw = ImageDraw.Draw(img)

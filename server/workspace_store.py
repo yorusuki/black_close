@@ -28,7 +28,11 @@ _REFRESH_POLICY_UPGRADE_KEY = "waveshare_refresh_policy_v2"
 _OFF_WORK_LAYOUT_UPGRADE_KEY = "waveshare_off_work_greetings_v1"
 _REFRESH_POLICY_DAILY_DEFAULT_UPGRADE_KEY = "waveshare_refresh_daily_default_v3"
 _LUNCH_PAGE_UPGRADE_KEY = "waveshare_lunch_page_v1"
+_WEEKEND_PAGE_UPGRADE_KEY = "waveshare_weekend_page_v1"
+_QUIET_HOURS_DEFAULT_UPGRADE_KEY = "device_display_quiet_hours_v1"
+_QUIET_HOURS_WEEKEND_UPGRADE_KEY = "device_display_quiet_hours_weekend_v2"
 _ONLINE_AFTER_SECONDS = 180
+_DEFAULT_QUIET_HOURS = {"enabled": True, "start": "20:00", "end": "08:30", "pause_weekends": True}
 
 
 def _path() -> Path:
@@ -379,6 +383,51 @@ def ensure_default_lunch_pages() -> dict[str, int]:
     return result
 
 
+def ensure_default_weekend_pages() -> dict[str, int]:
+    """為既有 4.26 吋設備補建週末靜態休假頁與六日規則。"""
+    from .default_layouts import waveshare_weekend_layout
+
+    page_name = "週末休假頁"
+    rule_name = "六日週休（靜態）"
+    result = {"pages": 0, "rules": 0}
+    with _db() as con:
+        done = con.execute("SELECT 1 FROM schema_metadata WHERE key=?", (_WEEKEND_PAGE_UPGRADE_KEY,)).fetchone()
+        if done:
+            return result
+        devices = con.execute(
+            "SELECT id,user_id FROM devices WHERE model_id='waveshare_4in26' AND hidden=0"
+        ).fetchall()
+        pages_by_user: dict[str, str] = {}
+        for device in devices:
+            user_id = device["user_id"]
+            page_id = pages_by_user.get(user_id)
+            if page_id is None:
+                existing = con.execute(
+                    "SELECT id FROM pages WHERE user_id=? AND name=? AND template_id=? ORDER BY created_at LIMIT 1",
+                    (user_id, page_name, "model:waveshare_4in26"),
+                ).fetchone()
+                if existing:
+                    page_id = existing["id"]
+                else:
+                    page_id = str(uuid.uuid4())
+                    con.execute(
+                        "INSERT INTO pages(id,user_id,name,template_id,content_json) VALUES(?,?,?,?,?)",
+                        (page_id, user_id, page_name, "model:waveshare_4in26", _json(waveshare_weekend_layout())),
+                    )
+                    result["pages"] += 1
+                pages_by_user[user_id] = page_id
+            if con.execute("SELECT 1 FROM rules WHERE device_id=? AND name=?", (device["id"], rule_name)).fetchone():
+                continue
+            con.execute(
+                """INSERT INTO rules(id,user_id,device_id,page_id,name,priority,weekdays_json,enabled)
+                   VALUES(?,?,?,?,?,?,?,?)""",
+                (str(uuid.uuid4()), user_id, device["id"], page_id, rule_name, 200, _json([5, 6]), 1),
+            )
+            result["rules"] += 1
+        con.execute("INSERT INTO schema_metadata(key,value) VALUES(?,?)", (_WEEKEND_PAGE_UPGRADE_KEY, _json(result)))
+    return result
+
+
 def upgrade_default_refresh_policy() -> int:
     """將尚未自訂、仍為舊 20 分鐘預設的局刷面板改為 5 小時全刷保護週期。"""
     with _db() as con:
@@ -432,6 +481,59 @@ def upgrade_default_refresh_policy_to_daily() -> int:
         con.execute(
             "INSERT INTO schema_metadata(key,value) VALUES(?,?)",
             (_REFRESH_POLICY_DAILY_DEFAULT_UPGRADE_KEY, str(updated)),
+        )
+        return updated
+
+
+def upgrade_default_display_quiet_hours() -> int:
+    """為既有可局刷面板補上夜間靜默時段，不覆寫使用者既有設定。"""
+    with _db() as con:
+        done = con.execute(
+            "SELECT 1 FROM schema_metadata WHERE key=?", (_QUIET_HOURS_DEFAULT_UPGRADE_KEY,)
+        ).fetchone()
+        if done:
+            return 0
+        rows = con.execute("SELECT id,profile_json FROM devices").fetchall()
+        updated = 0
+        for row in rows:
+            profile = _parse_json(row["profile_json"], {})
+            if not isinstance(profile, dict) or not profile.get("partial_refresh"):
+                continue
+            if "display_quiet_hours" in profile:
+                continue
+            profile["display_quiet_hours"] = dict(_DEFAULT_QUIET_HOURS)
+            con.execute("UPDATE devices SET profile_json=? WHERE id=?", (_json(profile), row["id"]))
+            updated += 1
+        con.execute(
+            "INSERT INTO schema_metadata(key,value) VALUES(?,?)",
+            (_QUIET_HOURS_DEFAULT_UPGRADE_KEY, str(updated)),
+        )
+        return updated
+
+
+def upgrade_default_display_quiet_hours_weekends() -> int:
+    """讓已部署第一版靜默設定的裝置，週末預設也維持靜態畫面。"""
+    with _db() as con:
+        done = con.execute(
+            "SELECT 1 FROM schema_metadata WHERE key=?", (_QUIET_HOURS_WEEKEND_UPGRADE_KEY,)
+        ).fetchone()
+        if done:
+            return 0
+        rows = con.execute("SELECT id,profile_json FROM devices").fetchall()
+        updated = 0
+        for row in rows:
+            profile = _parse_json(row["profile_json"], {})
+            quiet_hours = profile.get("display_quiet_hours") if isinstance(profile, dict) else None
+            if not isinstance(quiet_hours, dict) or "pause_weekends" in quiet_hours:
+                continue
+            quiet_hours = dict(quiet_hours)
+            quiet_hours["pause_weekends"] = True
+            profile["display_quiet_hours"] = quiet_hours
+            con.execute("UPDATE devices SET profile_json=? WHERE id=?", (_json(profile), row["id"]))
+            updated += 1
+        con.execute(
+            "INSERT INTO schema_metadata(key,value) VALUES(?,?)",
+            (_QUIET_HOURS_WEEKEND_UPGRADE_KEY, str(updated)),
         )
         return updated
 
@@ -549,8 +651,8 @@ def create_device(user_id: str, name: str, model_id: str, profile: dict | None =
         raise ValueError("不支援的硬體型號")
     profiles = {
         "inky_phat": {"driver": "inky_phat", "resolution": [212, 104], "color_mode": "3color", "partial_refresh": False},
-        "waveshare_4in26": {"driver": "waveshare_4in26", "resolution": [800, 480], "color_mode": "1bit", "partial_refresh": True, "full_refresh_interval_seconds": 86_400, "server_full_refresh_daily_at": "12:00", "full_refresh_daily_at": "12:00"},
-        "mock": {"driver": "mock", "resolution": [800, 480], "color_mode": "1bit", "partial_refresh": True, "full_refresh_interval_seconds": 86_400, "server_full_refresh_daily_at": "12:00", "full_refresh_daily_at": "12:00"},
+        "waveshare_4in26": {"driver": "waveshare_4in26", "resolution": [800, 480], "color_mode": "1bit", "partial_refresh": True, "full_refresh_interval_seconds": 86_400, "server_full_refresh_daily_at": "12:00", "full_refresh_daily_at": "12:00", "display_quiet_hours": dict(_DEFAULT_QUIET_HOURS)},
+        "mock": {"driver": "mock", "resolution": [800, 480], "color_mode": "1bit", "partial_refresh": True, "full_refresh_interval_seconds": 86_400, "server_full_refresh_daily_at": "12:00", "full_refresh_daily_at": "12:00", "display_quiet_hours": dict(_DEFAULT_QUIET_HOURS)},
     }
     token, token_hash, identifier = *issue_device_token(), str(uuid.uuid4())
     with _db() as con:
@@ -574,7 +676,7 @@ def update_device_refresh(user_id: str, device_id: str, refresh: Any) -> dict | 
         return None
     if not device["profile"].get("partial_refresh"):
         raise ValueError("此面板不支援局部刷新，無法設定局刷／全刷週期")
-    if not isinstance(refresh, dict) or set(refresh) - {"mode", "interval_seconds", "daily_at"}:
+    if not isinstance(refresh, dict) or set(refresh) - {"mode", "interval_seconds", "daily_at", "quiet_hours"}:
         raise ValueError("刷新設定格式不正確")
 
     mode = refresh.get("mode")
@@ -605,6 +707,30 @@ def update_device_refresh(user_id: str, device_id: str, refresh: Any) -> dict | 
         profile["full_refresh_daily_at"] = daily_at
     else:
         raise ValueError("刷新模式必須是 interval 或 daily")
+
+    if "quiet_hours" in refresh:
+        quiet_hours = refresh["quiet_hours"]
+        required_quiet_keys = {"enabled", "start", "end"}
+        if not isinstance(quiet_hours, dict) or not required_quiet_keys <= set(quiet_hours) <= required_quiet_keys | {"pause_weekends"}:
+            raise ValueError("靜默時段設定格式不正確")
+        if not isinstance(quiet_hours["enabled"], bool):
+            raise ValueError("靜默時段啟用值不正確")
+        pause_weekends = quiet_hours.get("pause_weekends", True)
+        if not isinstance(pause_weekends, bool):
+            raise ValueError("週末靜默啟用值不正確")
+        start, end = quiet_hours["start"], quiet_hours["end"]
+        if not isinstance(start, str) or not isinstance(end, str) or len(start) != 5 or len(end) != 5:
+            raise ValueError("靜默時段必須為 HH:MM")
+        try:
+            if dt.time.fromisoformat(start) == dt.time.fromisoformat(end):
+                raise ValueError("靜默開始與結束時間不可相同")
+        except ValueError as exc:
+            if str(exc) == "靜默開始與結束時間不可相同":
+                raise
+            raise ValueError("靜默時段必須為 HH:MM") from exc
+        profile["display_quiet_hours"] = {
+            "enabled": quiet_hours["enabled"], "start": start, "end": end, "pause_weekends": pause_weekends,
+        }
 
     with _db() as con:
         con.execute("UPDATE devices SET profile_json=? WHERE id=? AND user_id=?", (_json(profile), device_id, user_id))

@@ -97,6 +97,29 @@ _WAVESHARE_LUNCH_LAYOUT = {
 }
 
 
+_WAVESHARE_WEEKEND_LAYOUT = {
+    "elements": [
+        {
+            "instance_id": "weekend-rest-notice", "module_id": "status_notice",
+            "x": 0, "y": 0, "w": 800, "h": 480, "z": 1, "refresh_interval": 60,
+            "refresh_policy": "partial",
+            "config": {
+                "title": "週末休假中",
+                "messages": [
+                    "週末已簽收，待辦延後處理。",
+                    "今天休假，KPI 暫停營業。",
+                    "週休模式啟動：不接收工作訊號。",
+                    "假日合法放空中，請勿打擾。",
+                    "今天不加班，連鬧鐘也請假。",
+                    "週末的唯一行程：好好休息。",
+                ],
+                "interval_seconds": 0,
+            },
+        },
+    ],
+}
+
+
 def waveshare_work_layout() -> dict:
     """回傳可安全修改的新版 4.26 吋工作頁副本。"""
     return deepcopy(_WAVESHARE_WORK_LAYOUT)
@@ -110,3 +133,8 @@ def waveshare_off_work_layout() -> dict:
 def waveshare_lunch_layout() -> dict:
     """回傳 4.26 吋平日午休頁的可編輯副本。"""
     return deepcopy(_WAVESHARE_LUNCH_LAYOUT)
+
+
+def waveshare_weekend_layout() -> dict:
+    """回傳 4.26 吋週末靜態休假頁的可編輯副本。"""
+    return deepcopy(_WAVESHARE_WEEKEND_LAYOUT)

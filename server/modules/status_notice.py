@@ -5,6 +5,7 @@ import time
 
 from PIL import Image, ImageDraw
 
+from .. import config
 from .base import BaseModule
 from .drawing import load_font
 
@@ -80,8 +81,8 @@ class StatusNoticeModule(BaseModule):
         },
         {
             "key": "interval_seconds", "label": "台詞輪替／局刷間隔（秒）", "type": "number",
-            "default": 60, "min": 5, "max": 3600,
-            "help": "下班頁有多句台詞時，依此秒數換一句並優先局刷；全刷仍遵循設備的保護週期。",
+            "default": 60, "min": 0, "max": 3600,
+            "help": "設為 0 時固定顯示一則台詞，不會輪播；其他值為台詞輪替／局刷秒數。",
         },
     ]
 
@@ -92,10 +93,13 @@ class StatusNoticeModule(BaseModule):
         title = str(cfg.get("title", ""))
         messages = _messages(cfg)
         try:
-            interval = max(5, min(3600, int(cfg.get("interval_seconds", 60))))
+            interval = max(0, min(3600, int(cfg.get("interval_seconds", 60))))
         except (TypeError, ValueError):
             interval = 60
-        subtitle = messages[int(time.time() // interval) % len(messages)]
+        # 靜態模式仍可保留多句文案：依 ISO 週次選一則，因此同一個週末不會
+        # 因為時間流逝更換文字或觸發任何局刷。
+        message_index = config.now_local().isocalendar().week % len(messages) if interval == 0 else int(time.time() // interval) % len(messages)
+        subtitle = messages[message_index]
         title_font = load_font(max(18, int(min(w, h) * 0.12)))
         title_box = draw.textbbox((0, 0), title, font=title_font)
         title_x = (w - (title_box[2] - title_box[0])) / 2
