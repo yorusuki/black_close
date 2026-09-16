@@ -138,3 +138,20 @@ def waveshare_lunch_layout() -> dict:
 def waveshare_weekend_layout() -> dict:
     """回傳 4.26 吋週末靜態休假頁的可編輯副本。"""
     return deepcopy(_WAVESHARE_WEEKEND_LAYOUT)
+
+
+_WAVESHARE_7IN5_DASHBOARD_LAYOUT = {
+    "elements": [
+        {"instance_id": "clock-bar-top", "module_id": "clock_bar", "x": 0, "y": 0, "w": 800, "h": 48, "z": 10, "refresh_interval": 20, "refresh_policy": "partial", "config": {"time_format": "%H:%M"}},
+        {"instance_id": "mascot-work-main", "module_id": "mascot", "x": 24, "y": 64, "w": 432, "h": 224, "z": 1, "refresh_interval": 12, "refresh_policy": "partial", "config": {"interval_seconds": 12}},
+        {"instance_id": "countdown-main", "module_id": "countdown", "x": 480, "y": 64, "w": 296, "h": 112, "z": 1, "refresh_interval": 5, "refresh_policy": "partial", "config": {"title": "下一個目標", "events": [{"label": "距離下班", "kind": "daily_time", "time": "18:30"}], "show_seconds": False}},
+        {"instance_id": "attendance-month", "module_id": "monthly_attendance", "x": 480, "y": 194, "w": 296, "h": 180, "z": 1, "refresh_interval": 60, "refresh_policy": "partial", "config": {"title": "本月出勤", "month_offset": 0, "show_weekends": True, "show_summary": True}},
+        {"instance_id": "todo-main", "module_id": "todo_list", "x": 24, "y": 312, "w": 432, "h": 112, "z": 1, "refresh_interval": 60, "refresh_policy": "partial", "config": {"title": "今天只做好這些", "show_completed": True, "items": [{"text": "完成最重要的一件事", "done": False}, {"text": "喝水、起身、呼吸", "done": False}]}},
+        {"instance_id": "ticker-bottom", "module_id": "ticker", "x": 24, "y": 440, "w": 752, "h": 32, "z": 2, "refresh_interval": 10, "refresh_policy": "partial", "config": {"messages": ["今天也辛苦了，下一次休息值得先排進行事曆。", "記得喝水；訊息可以晚點回，人不行。"], "message_interval_seconds": 120, "scroll_step_seconds": 10, "pixels_per_step": 16}},
+    ],
+}
+
+
+def waveshare_7in5_dashboard_layout() -> dict:
+    """回傳 7.5 吋專用完整儀表板，不與 4.26 吋共用頁面。"""
+    return deepcopy(_WAVESHARE_7IN5_DASHBOARD_LAYOUT)

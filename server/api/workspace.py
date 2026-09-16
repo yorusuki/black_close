@@ -99,9 +99,18 @@ def list_pages():
 @bp.post("/pages")
 @auth.require_user
 def create_page():
-    data = request.get_json(force=False) or {}
     try:
-        return jsonify(workspace_store.create_page(_user_id(), data.get("name"), data.get("content"), data.get("model_id"))), 201
+        data = request.get_json(force=False)
+        if not isinstance(data, dict):
+            raise ValueError("頁面資料必須是 JSON 物件")
+        model_id = data.get("model_id")
+        preset = data.get("preset", "blank")
+        if not isinstance(preset, str):
+            raise ValueError("預設版面格式不正確")
+        if preset != "blank" and "content" in data:
+            raise ValueError("使用預設版面時不可同時傳入自訂內容")
+        content = workspace_store.page_preset(model_id, preset) if preset != "blank" else data.get("content")
+        return jsonify(workspace_store.create_page(_user_id(), data.get("name"), content, model_id)), 201
     except ValueError as exc:
         return jsonify({"error": "invalid_page", "message": str(exc)}), 400
 

@@ -10,15 +10,23 @@ from __future__ import annotations
 from .attendance import AttendanceModule
 from .clock_bar import ClockBarModule
 from .clock_in_badge import ClockInBadgeModule
+from .countdown import CountdownModule
 from .image import ImageModule
 from .mascot import MascotModule
+from .monthly_attendance import MonthlyAttendanceModule
 from .progress_bar import ProgressBarModule
 from .stat_pair import StatPairModule
 from .status_notice import StatusNoticeModule
+from .ticker import TickerModule
+from .todo_list import TodoListModule
 
 _MODULE_CLASSES = [
     ClockBarModule,
     ClockInBadgeModule,
+    TodoListModule,
+    CountdownModule,
+    TickerModule,
+    MonthlyAttendanceModule,
     ProgressBarModule,
     StatPairModule,
     AttendanceModule,

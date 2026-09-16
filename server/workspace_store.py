@@ -14,10 +14,11 @@ from typing import Any
 
 from . import config, store
 
-MODEL_IDS = {"inky_phat", "waveshare_4in26", "mock"}
+MODEL_IDS = {"inky_phat", "waveshare_4in26", "waveshare_7in5_v2", "mock"}
 _MODEL_RESOLUTIONS = {
     "inky_phat": (212, 104),
     "waveshare_4in26": (800, 480),
+    "waveshare_7in5_v2": (800, 480),
     "mock": (800, 480),
 }
 _PLACEHOLDER_USER_ID = "legacy-unassigned"
@@ -33,6 +34,13 @@ _QUIET_HOURS_DEFAULT_UPGRADE_KEY = "device_display_quiet_hours_v1"
 _QUIET_HOURS_WEEKEND_UPGRADE_KEY = "device_display_quiet_hours_weekend_v2"
 _ONLINE_AFTER_SECONDS = 180
 _DEFAULT_QUIET_HOURS = {"enabled": True, "start": "20:00", "end": "08:30", "pause_weekends": True}
+_HARDWARE_PROFILE_FIELDS = ("driver", "resolution", "color_mode", "partial_refresh")
+_DEFAULT_DEVICE_PROFILES = {
+    "inky_phat": {"driver": "inky_phat", "resolution": [212, 104], "color_mode": "3color", "partial_refresh": False},
+    "waveshare_4in26": {"driver": "waveshare_4in26", "resolution": [800, 480], "color_mode": "1bit", "partial_refresh": True, "full_refresh_interval_seconds": 86_400, "server_full_refresh_daily_at": "12:00", "full_refresh_daily_at": "12:00", "display_quiet_hours": _DEFAULT_QUIET_HOURS},
+    "waveshare_7in5_v2": {"driver": "waveshare_7in5_v2", "resolution": [800, 480], "color_mode": "1bit", "partial_refresh": True, "full_refresh_interval_seconds": 86_400, "server_full_refresh_daily_at": "12:00", "full_refresh_daily_at": "12:00", "display_quiet_hours": _DEFAULT_QUIET_HOURS},
+    "mock": {"driver": "mock", "resolution": [800, 480], "color_mode": "1bit", "partial_refresh": True, "full_refresh_interval_seconds": 86_400, "server_full_refresh_daily_at": "12:00", "full_refresh_daily_at": "12:00", "display_quiet_hours": _DEFAULT_QUIET_HOURS},
+}
 
 
 def _path() -> Path:
@@ -644,20 +652,35 @@ def get_device(user_id: str, device_id: str) -> dict | None:
         return _public_device(row) if row else None
 
 
+def _default_device_profile(model_id: str) -> dict:
+    """回傳型號固定的硬體能力與可調整刷新設定的獨立副本。"""
+    profile = _DEFAULT_DEVICE_PROFILES[model_id]
+    result = {**profile, "resolution": list(profile["resolution"])}
+    if "display_quiet_hours" in profile:
+        result["display_quiet_hours"] = dict(profile["display_quiet_hours"])
+    return result
+
+
 def create_device(user_id: str, name: str, model_id: str, profile: dict | None = None) -> dict:
     if not isinstance(name, str) or not 1 <= len(name.strip()) <= 100:
         raise ValueError("Pi 名稱必須為 1 至 100 個字元")
     if model_id not in MODEL_IDS:
         raise ValueError("不支援的硬體型號")
-    profiles = {
-        "inky_phat": {"driver": "inky_phat", "resolution": [212, 104], "color_mode": "3color", "partial_refresh": False},
-        "waveshare_4in26": {"driver": "waveshare_4in26", "resolution": [800, 480], "color_mode": "1bit", "partial_refresh": True, "full_refresh_interval_seconds": 86_400, "server_full_refresh_daily_at": "12:00", "full_refresh_daily_at": "12:00", "display_quiet_hours": dict(_DEFAULT_QUIET_HOURS)},
-        "mock": {"driver": "mock", "resolution": [800, 480], "color_mode": "1bit", "partial_refresh": True, "full_refresh_interval_seconds": 86_400, "server_full_refresh_daily_at": "12:00", "full_refresh_daily_at": "12:00", "display_quiet_hours": dict(_DEFAULT_QUIET_HOURS)},
-    }
+    canonical_profile = _default_device_profile(model_id)
+    if profile is not None:
+        if not isinstance(profile, dict):
+            raise ValueError("設備 profile 必須是物件")
+        changed_hardware = [field for field in _HARDWARE_PROFILE_FIELDS if field in profile and profile[field] != canonical_profile[field]]
+        if changed_hardware:
+            raise ValueError("硬體型號建立後不可替換 driver、解析度、色彩模式或局刷能力")
+        # 僅供遷移／測試帶入非硬體設定；硬體身分始終由 model_id 決定。
+        canonical_profile.update(profile)
+    for field in _HARDWARE_PROFILE_FIELDS:
+        canonical_profile[field] = _default_device_profile(model_id)[field]
     token, token_hash, identifier = *issue_device_token(), str(uuid.uuid4())
     with _db() as con:
         con.execute("INSERT INTO devices(id,user_id,name,model_id,profile_json,token_hash) VALUES(?,?,?,?,?,?)",
-                    (identifier, user_id, name.strip(), model_id, _json(profile or profiles[model_id]), token_hash))
+                    (identifier, user_id, name.strip(), model_id, _json(canonical_profile), token_hash))
         row = con.execute("SELECT * FROM devices WHERE id=?", (identifier,)).fetchone()
     result = _public_device(row)
     result["token"] = token  # 僅建立／重配發時回傳
@@ -827,6 +850,16 @@ def _validate_page_content(content: Any, model_id: str) -> dict:
         if x < 0 or y < 0 or width < 1 or height < 1 or x + width > canvas_width or y + height > canvas_height:
             raise ValueError(f"第 {index} 個元件超出 {canvas_width}×{canvas_height} 面板範圍")
     return content
+
+
+def page_preset(model_id: str, preset: str | None) -> dict:
+    """只回傳白名單中的內建版面，絕不把前端 preset 當成可執行或可任意取檔的名稱。"""
+    if preset in (None, "", "blank"):
+        return {"elements": []}
+    if preset == "7in5_dashboard" and model_id == "waveshare_7in5_v2":
+        from .default_layouts import waveshare_7in5_dashboard_layout
+        return waveshare_7in5_dashboard_layout()
+    raise ValueError("所選預設版面不支援此面板型號")
 
 
 def create_page(user_id: str, name: str, content: Any | None = None, model_id: str | None = None) -> dict:
@@ -1014,6 +1047,28 @@ def attendance_snapshot(user_id: str, day: dt.date) -> dict:
             "on_leave": bool(record.get("on_leave")), "leave_note": record.get("leave_note", "")}
 
 
+def attendance_month_snapshot(user_id: str, day: dt.date, month_offset: Any = 0) -> dict:
+    """回傳該帳號單月的最小出勤資料，供月曆模組安全隨 layout 下發。"""
+    try:
+        offset = max(-11, min(0, int(month_offset)))
+    except (TypeError, ValueError):
+        offset = 0
+    serial = day.year * 12 + day.month - 1 + offset
+    year, month = serial // 12, serial % 12 + 1
+    first = dt.date(year, month, 1)
+    next_month = dt.date(year + (month == 12), 1 if month == 12 else month + 1, 1)
+    with _db() as con:
+        rows = con.execute(
+            "SELECT day,clock_in,clock_out,on_leave FROM attendance_records WHERE user_id=? AND day>=? AND day<?",
+            (user_id, first.isoformat(), next_month.isoformat()),
+        ).fetchall()
+    records = {}
+    for row in rows:
+        status = "leave" if row["on_leave"] else "off_work" if row["clock_in"] and row["clock_out"] else "working" if row["clock_in"] else "pending"
+        records[str(int(str(row["day"])[-2:]))] = status
+    return {"year": year, "month": month, "records": records}
+
+
 def save_attendance(user_id: str, day: dt.date, payload: Any) -> dict:
     if not isinstance(payload, dict) or set(payload) - {"clock_in", "clock_out", "on_leave", "leave_note"}:
         raise ValueError("出勤欄位不正確")
@@ -1146,6 +1201,8 @@ def _page_layout(device: dict, page: dict | None, now: dt.datetime, *, scene: st
             # 新版 API 的 layout 必須與管理台／EIP 排程共用 SQLite 正本。舊版
             # compositor 仍可透過各模組 fetch_data() 讀舊 JSON，維持相容。
             data = attendance_snapshot(device["user_id"], now.date())
+        elif item.get("module_id") == "monthly_attendance":
+            data = attendance_month_snapshot(device["user_id"], now.date(), (item.get("config") or {}).get("month_offset", 0))
         else:
             try: data = module.fetch_data(item.get("config") or {})
             except Exception: data = {}
