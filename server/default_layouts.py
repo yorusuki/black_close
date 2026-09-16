@@ -155,3 +155,22 @@ _WAVESHARE_7IN5_DASHBOARD_LAYOUT = {
 def waveshare_7in5_dashboard_layout() -> dict:
     """回傳 7.5 吋專用完整儀表板，不與 4.26 吋共用頁面。"""
     return deepcopy(_WAVESHARE_7IN5_DASHBOARD_LAYOUT)
+
+
+_WAVESHARE_LEAVE_LAYOUT = {
+    "elements": [{
+        "instance_id": "leave-notice", "module_id": "status_notice",
+        "x": 0, "y": 0, "w": 800, "h": 480, "z": 1, "refresh_interval": 60,
+        "refresh_policy": "partial",
+        "config": {
+            "title": "今日請假中",
+            "messages": ["今天先把時間還給自己，好好休息。"],
+            "interval_seconds": 0,
+        },
+    }],
+}
+
+
+def waveshare_leave_layout() -> dict:
+    """回傳 800×480 Waveshare 共用內容、但由頁面 model 隔離的靜態請假頁。"""
+    return deepcopy(_WAVESHARE_LEAVE_LAYOUT)

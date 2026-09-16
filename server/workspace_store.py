@@ -30,6 +30,7 @@ _OFF_WORK_LAYOUT_UPGRADE_KEY = "waveshare_off_work_greetings_v1"
 _REFRESH_POLICY_DAILY_DEFAULT_UPGRADE_KEY = "waveshare_refresh_daily_default_v3"
 _LUNCH_PAGE_UPGRADE_KEY = "waveshare_lunch_page_v1"
 _WEEKEND_PAGE_UPGRADE_KEY = "waveshare_weekend_page_v1"
+_LEAVE_PAGE_UPGRADE_KEY = "waveshare_leave_page_v1"
 _QUIET_HOURS_DEFAULT_UPGRADE_KEY = "device_display_quiet_hours_v1"
 _QUIET_HOURS_WEEKEND_UPGRADE_KEY = "device_display_quiet_hours_weekend_v2"
 _ONLINE_AFTER_SECONDS = 180
@@ -433,6 +434,62 @@ def ensure_default_weekend_pages() -> dict[str, int]:
             )
             result["rules"] += 1
         con.execute("INSERT INTO schema_metadata(key,value) VALUES(?,?)", (_WEEKEND_PAGE_UPGRADE_KEY, _json(result)))
+    return result
+
+
+def ensure_default_leave_pages() -> dict[str, int]:
+    """為既有 Waveshare 設備補建全天請假頁與規則。
+
+    不覆寫既有頁面，也不在該 Pi 已經有任一請假規則時新增另一條，避免將
+    使用者已客製的請假頁變成重疊規則。4.26 與 7.5 雖同解析度，頁面仍分別綁定型號。
+    """
+    from .default_layouts import waveshare_leave_layout
+
+    page_name = "全天請假頁"
+    rule_name = "全天請假"
+    models = ("waveshare_4in26", "waveshare_7in5_v2")
+    result = {"pages": 0, "rules": 0}
+    with _db() as con:
+        done = con.execute("SELECT 1 FROM schema_metadata WHERE key=?", (_LEAVE_PAGE_UPGRADE_KEY,)).fetchone()
+        if done:
+            return result
+        devices = con.execute(
+            "SELECT id,user_id,model_id FROM devices WHERE model_id IN (?,?) AND hidden=0",
+            models,
+        ).fetchall()
+        pages_by_user_model: dict[tuple[str, str], str] = {}
+        for device in devices:
+            existing_leave = con.execute(
+                "SELECT 1 FROM rules WHERE device_id=? AND attendance_status='leave' LIMIT 1",
+                (device["id"],),
+            ).fetchone()
+            if existing_leave:
+                continue
+            key = (device["user_id"], device["model_id"])
+            page_id = pages_by_user_model.get(key)
+            if page_id is None:
+                template_id = f"model:{device['model_id']}"
+                existing = con.execute(
+                    "SELECT id FROM pages WHERE user_id=? AND name=? AND template_id=? ORDER BY created_at LIMIT 1",
+                    (device["user_id"], page_name, template_id),
+                ).fetchone()
+                if existing:
+                    page_id = existing["id"]
+                else:
+                    page_id = str(uuid.uuid4())
+                    con.execute(
+                        "INSERT INTO pages(id,user_id,name,template_id,content_json) VALUES(?,?,?,?,?)",
+                        (page_id, device["user_id"], page_name, template_id, _json(waveshare_leave_layout())),
+                    )
+                    result["pages"] += 1
+                pages_by_user_model[key] = page_id
+            con.execute(
+                """INSERT INTO rules(id,user_id,device_id,page_id,name,priority,weekdays_json,attendance_status,enabled)
+                   VALUES(?,?,?,?,?,?,?,?,?)""",
+                (str(uuid.uuid4()), device["user_id"], device["id"], page_id, rule_name, 300, _json([]), "leave", 1),
+            )
+            result["rules"] += 1
+        con.execute("INSERT INTO schema_metadata(key,value) VALUES(?,?)", (_LEAVE_PAGE_UPGRADE_KEY, _json(result)))
     return result
 
 
