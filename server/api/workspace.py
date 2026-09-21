@@ -15,6 +15,11 @@ def _user_id() -> str:
     return auth.current_user()["id"]
 
 
+def _asset_view(record: dict) -> dict:
+    """公開給 owner 的圖庫卡片資料；不透露實體 manifest 路徑以外的資訊。"""
+    return {**record, **assets.animation_info(record)}
+
+
 @bp.get("/me")
 @auth.require_user
 def me():
@@ -187,7 +192,7 @@ def save_attendance():
 @bp.get("/assets")
 @auth.require_user
 def list_assets():
-    return jsonify(workspace_store.list_assets(_user_id()))
+    return jsonify([_asset_view(record) for record in workspace_store.list_assets(_user_id())])
 
 
 @bp.post("/assets")
@@ -202,13 +207,13 @@ def upload_asset():
         if existing:
             # 實體檔名由 digest 決定，已被安全保存；同一個人再次上傳相同圖不新增
             # 圖庫卡片，也避免要使用者猜哪個素材 ID 才是有效的。
-            return jsonify({**existing, "deduplicated": True}), 200
+            return jsonify({**_asset_view(existing), "deduplicated": True}), 200
         mime_type = record["mime_type"]
         saved = workspace_store.add_asset(_user_id(), record, mime_type)
         if saved["deduplicated"]:
-            return jsonify(saved), 200
+            return jsonify(_asset_view(saved)), 200
         assets.register_asset(record)
-        return jsonify(saved), 201
+        return jsonify(_asset_view(saved)), 201
     except ValueError as exc:
         return jsonify({"error": "invalid_asset", "message": str(exc)}), 400
 
@@ -219,7 +224,30 @@ def get_asset(asset_id):
     record = workspace_store.get_asset(_user_id(), asset_id)
     if not record:
         return jsonify({"error": "not_found"}), 404
-    path = config.DATA_DIR / "assets" / record["filename"]
+    try:
+        path = assets.asset_file_path(record)
+    except ValueError:
+        return jsonify({"error": "asset_file_invalid"}), 404
     if not path.is_file():
         return jsonify({"error": "asset_file_missing"}), 404
     return send_file(path, mimetype=record["mime_type"], conditional=True)
+
+
+@bp.delete("/assets/<asset_id>")
+@auth.require_user
+def delete_asset(asset_id):
+    try:
+        record = workspace_store.delete_asset(_user_id(), asset_id)
+    except ValueError as exc:
+        return jsonify({"error": "asset_in_use", "message": str(exc)}), 409
+    if not record:
+        return jsonify({"error": "not_found"}), 404
+    # 資料庫索引先成功刪除才清實體檔。檔案仍被其他帳號共用時保留，避免破壞對方的
+    # 圖庫；清理不影響本次 API 回覆。
+    assets.delete_asset(asset_id)
+    assets.remove_asset_files(
+        record,
+        preview_is_referenced=workspace_store.asset_file_is_referenced(record["filename"]),
+        digest_is_referenced=workspace_store.asset_digest_is_referenced(record["digest"]),
+    )
+    return ("", 204)

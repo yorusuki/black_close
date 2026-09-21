@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from flask import Blueprint, jsonify, request, send_file
 
-from .. import auth, config, workspace_store
+from .. import assets, auth, workspace_store
 
 bp = Blueprint("device_v1", __name__, url_prefix="/api/v1/device")
 
@@ -20,10 +20,27 @@ def asset(device, asset_id):
     record = workspace_store.asset_for_device(device, asset_id)
     if not record:
         return jsonify({"error": "not_found"}), 404
-    path = config.DATA_DIR / "assets" / record["filename"]
+    try:
+        path = assets.asset_file_path(record)
+    except ValueError:
+        return jsonify({"error": "asset_file_invalid"}), 404
     if not path.is_file():
         return jsonify({"error": "asset_file_missing"}), 404
     return send_file(path, mimetype=record["mime_type"], conditional=True)
+
+
+@bp.get("/assets/<asset_id>/frames/<int:frame_index>")
+@auth.require_device
+def animation_frame(device, asset_id, frame_index):
+    """只讓 token 所屬裝置讀取 owner 素材的已驗證動畫影格。"""
+    record = workspace_store.asset_for_device(device, asset_id)
+    if not record:
+        return jsonify({"error": "not_found"}), 404
+    result = assets.animation_frame_path(record, frame_index)
+    if not result:
+        return jsonify({"error": "frame_not_found"}), 404
+    path, mime_type = result
+    return send_file(path, mimetype=mime_type, conditional=True)
 
 
 @bp.post("/telemetry")

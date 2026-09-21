@@ -955,7 +955,7 @@ def get_page(user_id: str, page_id: str) -> dict | None:
         return _public_page(row) if row else None
 
 
-def _validate_page_content(content: Any, model_id: str) -> dict:
+def _validate_page_content(content: Any, model_id: str, user_id: str | None = None) -> dict:
     if not isinstance(content, dict) or not isinstance(content.get("elements", []), list):
         raise ValueError("頁面內容必須包含 elements 陣列")
     if len(content["elements"]) > 100:
@@ -988,6 +988,10 @@ def _validate_page_content(content: Any, model_id: str) -> dict:
 
         module = get_module(element.get("module_id"))
         module_config = element.get("config", {})
+        if element.get("module_id") == "image" and user_id is not None:
+            asset_id = module_config.get("asset_id") if isinstance(module_config, dict) else None
+            if asset_id and (not isinstance(asset_id, str) or not get_asset(user_id, asset_id)):
+                raise ValueError(f"第 {index} 個圖片元件選擇的圖庫素材不存在或不屬於目前帳號")
         if module is None or not isinstance(module_config, dict) or partial_minimum is None:
             continue
         for field in module.config_schema:
@@ -1039,7 +1043,7 @@ def create_page(user_id: str, name: str, content: Any | None = None, model_id: s
         raise ValueError("頁面名稱必須為 1 至 100 個字元")
     if model_id not in MODEL_IDS:
         raise ValueError("建立頁面時必須選擇支援的面板型號")
-    identifier, content = str(uuid.uuid4()), _validate_page_content(content or {"elements": []}, model_id)
+    identifier, content = str(uuid.uuid4()), _validate_page_content(content or {"elements": []}, model_id, user_id)
     with _db() as con:
         con.execute("INSERT INTO pages(id,user_id,name,template_id,content_json) VALUES(?,?,?,?,?)",
                     (identifier, user_id, name.strip(), f"model:{model_id}", _json(content)))
@@ -1054,7 +1058,7 @@ def save_page(user_id: str, page_id: str, name: str, content: Any) -> dict | Non
         if not row:
             return None
         model_id = _page_model_id(_public_page(row))
-        content = _validate_page_content(content, model_id)
+        content = _validate_page_content(content, model_id, user_id)
         con.execute("UPDATE pages SET name=?,content_json=? WHERE id=? AND user_id=?", (name.strip(), _json(content), page_id, user_id))
         return _public_page(con.execute("SELECT * FROM pages WHERE id=?", (page_id,)).fetchone())
 
@@ -1222,6 +1226,52 @@ def add_asset(user_id: str, record: dict, mime_type: str) -> dict:
         return {**created, "deduplicated": False}
 
 
+def asset_page_references(user_id: str, asset_id: str) -> list[dict]:
+    """列出同一使用者仍引用此圖片的頁面，刪除前不可只靠前端判定。"""
+    references: list[dict] = []
+    with _db() as con:
+        rows = con.execute("SELECT id,name,content_json FROM pages WHERE user_id=?", (user_id,)).fetchall()
+    for row in rows:
+        try:
+            elements = json.loads(row["content_json"]).get("elements", [])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if any(
+            isinstance(element, dict)
+            and element.get("module_id") == "image"
+            and isinstance(element.get("config"), dict)
+            and element["config"].get("asset_id") == asset_id
+            for element in elements
+        ):
+            references.append({"id": row["id"], "name": row["name"]})
+    return references
+
+
+def delete_asset(user_id: str, asset_id: str) -> dict | None:
+    """刪除 owner 的圖庫索引；被版面使用時拒絕，保留畫面可重現性。"""
+    record = get_asset(user_id, asset_id)
+    if not record:
+        return None
+    references = asset_page_references(user_id, asset_id)
+    if references:
+        names = "、".join(reference["name"] for reference in references[:3])
+        suffix = " 等" if len(references) > 3 else ""
+        raise ValueError(f"此圖片仍被頁面「{names}{suffix}」使用；請先在版面中改用其他圖片後再刪除")
+    with _db() as con:
+        con.execute("DELETE FROM assets WHERE id=? AND user_id=?", (asset_id, user_id))
+    return record
+
+
+def asset_file_is_referenced(filename: str) -> bool:
+    with _db() as con:
+        return con.execute("SELECT 1 FROM assets WHERE filename=? LIMIT 1", (filename,)).fetchone() is not None
+
+
+def asset_digest_is_referenced(digest: str) -> bool:
+    with _db() as con:
+        return con.execute("SELECT 1 FROM assets WHERE digest=? LIMIT 1", (digest,)).fetchone() is not None
+
+
 def attendance_snapshot(user_id: str, day: dt.date) -> dict:
     with _db() as con:
         row = con.execute("SELECT * FROM attendance_records WHERE user_id=? AND day=?", (user_id, day.isoformat())).fetchone()
@@ -1380,7 +1430,12 @@ def _page_layout(device: dict, page: dict | None, now: dt.datetime, *, scene: st
         data: dict = {}
         if item.get("module_id") == "image":
             asset = get_asset(device["user_id"], str((item.get("config") or {}).get("asset_id", "")))
-            if asset: data["filename"] = asset["filename"]
+            if asset:
+                # animation manifest 由 Server 素材庫驗證後才下發；Pi 仍會逐張下載並
+                # 驗證，任何一張未就緒都不切換新版面。
+                from . import assets as asset_store
+                animation = asset_store.animation_info(asset)
+                data = {"filename": asset["filename"], "animation": animation} if animation.get("animated") else {"filename": asset["filename"]}
         elif item.get("module_id") in {"attendance", "clock_in_badge"}:
             # 新版 API 的 layout 必須與管理台／EIP 排程共用 SQLite 正本。舊版
             # compositor 仍可透過各模組 fetch_data() 讀舊 JSON，維持相容。

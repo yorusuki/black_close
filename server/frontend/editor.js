@@ -1,6 +1,6 @@
 "use strict";
 
-const state = { csrf: "", modules: [], devices: [], pages: [], rules: [], ruleConflicts: [], editingRuleId: null, page: null, savedContentSignature: null, selected: null, inspectorDirty: false, assignment: null, refreshDeviceId: null, activeTab: "overview", layoutView: "canvas", drag: null, canvas: { width: 800, height: 480, scale: 1 } };
+const state = { csrf: "", modules: [], devices: [], pages: [], rules: [], ruleConflicts: [], assets: [], editingRuleId: null, page: null, savedContentSignature: null, selected: null, inspectorDirty: false, assignment: null, refreshDeviceId: null, activeTab: "overview", layoutView: "canvas", drag: null, canvas: { width: 800, height: 480, scale: 1 } };
 const el = (id) => document.getElementById(id);
 const clone = (value) => value === undefined ? null : JSON.parse(JSON.stringify(value));
 const modelLabel = { waveshare_4in26: "Waveshare 4.26 吋", waveshare_7in5_v2: "Waveshare 7.5 吋 e-Paper HAT V2（黑白）", inky_phat: "Pimoroni Inky pHAT", mock: "Mock 預覽裝置" };
@@ -71,7 +71,8 @@ function switchTab(name) {
   document.querySelectorAll(".tab").forEach((tab) => { const active = tab.dataset.tab === name; tab.setAttribute("aria-selected", String(active)); });
   document.querySelectorAll("[data-panel]").forEach((panel) => { panel.hidden = panel.dataset.panel !== name; });
   history.replaceState(null, "", `#${name}`);
-  if (name === "content") Promise.all([loadAssets(), loadAttendance()]).catch(message);
+  if (name === "gallery") loadAssets().catch(message);
+  if (name === "content") loadAttendance().catch(message);
   if (name === "layouts") renderPage();
 }
 
@@ -295,6 +296,25 @@ function field(labelText, value = "", type = "text", data = {}) {
   for (const [key, entry] of Object.entries(data)) if (key !== "options") input.dataset[key] = String(entry);
   label.append(input); return label;
 }
+function assetPicker(schema, item) {
+  const label = document.createElement("label"); label.textContent = schema.label || "圖庫圖片";
+  const select = document.createElement("select"); select.dataset.key = schema.key; select.dataset.type = "asset";
+  select.append(new Option("未選擇圖片", ""));
+  for (const asset of state.assets) {
+    const suffix = asset.animated ? ` · GIF 動畫 ${asset.frame_count} 格` : "";
+    select.append(new Option(`${asset.original_filename || "未命名圖片"}${suffix}`, asset.id));
+  }
+  select.value = item.config?.[schema.key] || "";
+  const preview = document.createElement("img"); preview.className = "asset-picker-preview"; preview.alt = "目前選取圖片預覽";
+  const syncPreview = () => {
+    const selected = state.assets.find((asset) => asset.id === select.value);
+    preview.hidden = !selected;
+    if (selected) preview.src = `/api/workspace/assets/${encodeURIComponent(selected.id)}`;
+  };
+  select.onchange = syncPreview; syncPreview(); label.append(select, preview);
+  const openGallery = document.createElement("button"); openGallery.type = "button"; openGallery.className = "button button-secondary button-small"; openGallery.textContent = "開啟圖庫管理"; openGallery.onclick = () => switchTab("gallery");
+  const wrap = document.createElement("div"); wrap.className = "asset-picker"; wrap.append(label, openGallery); return wrap;
+}
 function check(labelText, checked, data = {}) {
   const label = document.createElement("label"); label.className = "checkbox-field";
   const input = document.createElement("input"); input.type = "checkbox"; input.checked = Boolean(checked);
@@ -458,6 +478,7 @@ function renderInspector() {
   const fields = el("config-fields"); fields.replaceChildren();
   for (const schema of module?.config_schema || []) {
     if (schema.type === "json") { fields.append(complexEditor(schema, item)); continue; }
+    if (schema.type === "asset") { fields.append(assetPicker(schema, item)); continue; }
     if (schema.type === "boolean") { fields.append(check(schema.label || schema.key, item.config?.[schema.key] ?? schema.default, { key: schema.key, type: "boolean" })); continue; }
     const input = field(schema.label || schema.key, item.config?.[schema.key] ?? schema.default ?? "", schema.type === "number" ? "number" : schema.type === "select" ? "select" : "text", { key: schema.key, type: schema.type || "text", options: schema.options || [] });
     const control = input.querySelector("input, select"); if (schema.type === "number") {
@@ -468,7 +489,7 @@ function renderInspector() {
         if (minimum !== null) {
           control.min = String(minimum);
           const safety = document.createElement("span"); safety.className = "field-help";
-          safety.textContent = `此 ${modelLabel[editorDevice()?.model_id] || "面板"} 的安全局刷下限為 ${minimum.toFixed(1)} 秒。${schema.allow_zero ? "0 表示固定不輪替。" : ""}`;
+          safety.textContent = `此 ${modelLabel[editorDevice()?.model_id] || "面板"} 的安全局刷下限為 ${minimum.toFixed(1)} 秒。${schema.allow_zero ? (schema.zero_help || "0 表示固定不輪替。") : ""}`;
           input.append(safety);
         }
       }
@@ -534,26 +555,39 @@ function assetSize(bytes) {
   return value < 1024 * 1024 ? `${Math.max(1, Math.round(value / 1024))} KB` : `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-async function copyAssetId(assetId) {
-  try { await navigator.clipboard.writeText(assetId); notify("素材 ID 已複製；可貼入圖片模組"); }
-  catch { notify(`請手動複製素材 ID：${assetId}`, true); }
+function selectAssetForCurrentImage(asset) {
+  const item = selectedElement(); const module = item && moduleFor(item);
+  if (!item || module?.module_id !== "image") {
+    switchTab("layouts"); notify("請先在版面編輯選取一個「圖片」元件，再從圖庫套用圖片。", true); return;
+  }
+  item.config ||= {}; item.config.asset_id = asset.id; state.inspectorDirty = true; renderPage(); switchTab("layouts");
+  notify("圖片已選取到目前元件；請按「套用設定」與「儲存版面」後才會下發給 Pi。");
 }
 
-async function loadAssets() {
-  const assets = await api("/api/workspace/assets");
-  const cards = assets.map((asset) => {
+async function deleteAsset(asset) {
+  if (!confirm(`確定刪除「${asset.original_filename || "這張圖片"}」？已儲存版面仍在使用時會被拒絕。`)) return;
+  try { await api(`/api/workspace/assets/${encodeURIComponent(asset.id)}`, { method: "DELETE" }); await loadAssets(); notify("圖片已從你的圖庫刪除"); }
+  catch (error) { message(error); }
+}
+
+function renderAssetGallery() {
+  const cards = state.assets.map((asset) => {
     const card = document.createElement("article"); card.className = "asset-card";
     const image = document.createElement("img"); image.className = "asset";
     image.src = `/api/workspace/assets/${encodeURIComponent(asset.id)}`; image.alt = asset.original_filename || "圖片素材";
     const details = document.createElement("div"); details.className = "asset-details";
     const name = document.createElement("strong"); name.textContent = asset.original_filename || "未命名圖片";
-    const meta = document.createElement("span"); meta.textContent = `${assetSize(asset.size)} · 已最佳化`;
-    const id = document.createElement("code"); id.textContent = asset.id;
-    const copy = document.createElement("button"); copy.type = "button"; copy.className = "button button-secondary button-small"; copy.textContent = "複製 ID";
-    copy.onclick = () => { copyAssetId(asset.id); };
-    details.append(name, meta, id, copy); card.append(image, details); return card;
+    const meta = document.createElement("span"); meta.textContent = asset.animated ? `${assetSize(asset.size)} · GIF／動態 WebP · ${asset.frame_count} 格` : `${assetSize(asset.size)} · 已最佳化靜態圖片`;
+    const actions = document.createElement("div"); actions.className = "asset-actions";
+    const apply = document.createElement("button"); apply.type = "button"; apply.className = "button button-primary button-small"; apply.textContent = "套用到圖片元件"; apply.onclick = () => selectAssetForCurrentImage(asset);
+    const remove = document.createElement("button"); remove.type = "button"; remove.className = "button button-danger button-small"; remove.textContent = "刪除"; remove.onclick = () => deleteAsset(asset);
+    actions.append(apply, remove); details.append(name, meta, actions); card.append(image, details); return card;
   });
-  el("asset-list").replaceChildren(...cards);
+  el("asset-list").replaceChildren(...cards.length ? cards : [Object.assign(document.createElement("p"), { className: "empty-state", textContent: "目前尚未上傳圖片。" })]);
+}
+async function loadAssets() {
+  state.assets = await api("/api/workspace/assets");
+  renderAssetGallery();
 }
 async function loadAttendance() { const attendance = await api("/api/workspace/attendance/today"); el("clock-in").value = attendance.clock_in || ""; el("clock-out").value = attendance.clock_out || ""; el("on-leave").checked = attendance.on_leave; el("leave-note").value = attendance.leave_note; el("attendance-status").textContent = `${attendance.date}：${attendance.status}`; }
 function showToken(token) { el("token-value").textContent = token; el("token-dialog").showModal(); }
@@ -577,7 +611,7 @@ function openRefreshSettings(device) {
 }
 
 async function refresh(loadSelected = true) {
-  const currentPageId = state.page?.id; [state.devices, state.pages, state.rules, state.ruleConflicts] = await Promise.all([api("/api/workspace/devices"), api("/api/workspace/pages"), api("/api/workspace/rules"), api("/api/workspace/rules/conflicts")]);
+  const currentPageId = state.page?.id; [state.devices, state.pages, state.rules, state.ruleConflicts, state.assets] = await Promise.all([api("/api/workspace/devices"), api("/api/workspace/pages"), api("/api/workspace/rules"), api("/api/workspace/rules/conflicts"), api("/api/workspace/assets")]);
   const activeDevices = state.devices.filter((device) => !device.hidden); const modelIds = [...new Set(activeDevices.map((device) => device.model_id))]; option(el("canvas-device"), state.devices, (device) => device.name); option(el("rule-model"), modelIds.map((id) => ({ id })), (model) => modelLabel[model.id] || model.id); syncPageOptions(); syncRuleDeviceOptions(); updateRuleConflictHelp();
   renderSummary(); renderDevices(); renderRules(); renderModulePalette();
   if (loadSelected && currentPageId && state.pages.some((page) => page.id === currentPageId)) await loadPage(currentPageId);
@@ -605,6 +639,6 @@ function bindEvents() {
 
 async function init() {
   assertDocumentContract();
-  const me = await api("/api/workspace/me"); state.csrf = me.csrf_token; el("identity").textContent = `${me.display_name}（${me.role}）`; state.modules = await api("/api/modules"); bindEvents(); await refresh(); await loadDeviceAssignment(true); const initial = location.hash.slice(1); switchTab(["overview", "devices", "layouts", "rules", "content"].includes(initial) ? initial : "overview");
+  const me = await api("/api/workspace/me"); state.csrf = me.csrf_token; el("identity").textContent = `${me.display_name}（${me.role}）`; state.modules = await api("/api/modules"); bindEvents(); await refresh(); await loadDeviceAssignment(true); const initial = location.hash.slice(1); switchTab(["overview", "devices", "layouts", "rules", "gallery", "content"].includes(initial) ? initial : "overview");
 }
 init().catch(message);
