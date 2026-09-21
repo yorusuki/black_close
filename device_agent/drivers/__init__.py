@@ -16,6 +16,10 @@ def build_driver(profile: dict) -> BaseDisplayDriver:
         from .waveshare_driver import WaveshareDriver
         return WaveshareDriver(color_mode=profile.get("color_mode", "1bit"))
 
+    if driver_name == "waveshare_7in5_v2":
+        from .waveshare_7in5_v2_driver import Waveshare7In5V2Driver
+        return Waveshare7In5V2Driver()
+
     if driver_name == "mock":
         from .. import config as agent_config
         return MockDriver(agent_config.PREVIEW_PATH.format(device_id=profile["id"]))

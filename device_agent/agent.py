@@ -5,9 +5,12 @@ import datetime
 import json
 import logging
 import os
+import tempfile
 import time
+from pathlib import Path
 
 import requests
+from PIL import Image, UnidentifiedImageError
 
 from . import config as agent_config
 from .drivers import build_driver
@@ -15,6 +18,7 @@ from .drivers import build_driver
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("device_agent.agent")
 LAYOUT_CACHE_PATH = agent_config.BASE_DIR / "data" / "runtime" / "last_device_layout.json"
+MAX_ASSET_DOWNLOAD_BYTES = 30 * 1024 * 1024
 
 
 def _headers(token: str) -> dict[str, str]:
@@ -100,27 +104,94 @@ def report_telemetry(server_url: str, headers: dict, payload: dict) -> None:
         log.warning("telemetry 上傳失敗，會在下個輪詢週期重試")
 
 
-def sync_assets(server_url: str, headers: dict, resolved: dict) -> None:
-    """Only request assets referenced by this device's layout through the v1 token boundary."""
+def _safe_asset_filename(value: object) -> str | None:
+    """只允許 Server 下發的一個檔名，禁止 layout 資料跨出 Pi 快取資料夾。"""
+    if not isinstance(value, str) or not value or len(value) > 180:
+        return None
+    return value if Path(value).name == value else None
+
+
+def _valid_asset_file(path: Path) -> bool:
+    try:
+        if not path.is_file() or not 0 < path.stat().st_size <= MAX_ASSET_DOWNLOAD_BYTES:
+            return False
+        with Image.open(path) as image:
+            image.verify()
+        return True
+    except (OSError, UnidentifiedImageError, ValueError):
+        return False
+
+
+def _download_asset(server_url: str, headers: dict, asset_id: str, destination) -> bool:
+    """串流下載、大小限制、完整驗證後才原子替換舊圖片。"""
+    temporary_name: str | None = None
+    try:
+        response = requests.get(
+            f"{server_url}/api/v1/device/assets/{asset_id}", headers=headers, timeout=30, stream=True
+        )
+        response.raise_for_status()
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        total = 0
+        with tempfile.NamedTemporaryFile(dir=destination.parent, prefix=f".{destination.name}.", suffix=".tmp", delete=False) as temporary:
+            temporary_name = temporary.name
+            for chunk in response.iter_content(chunk_size=64 * 1024):
+                if not chunk:
+                    continue
+                total += len(chunk)
+                if total > MAX_ASSET_DOWNLOAD_BYTES:
+                    raise ValueError("素材下載超過 30MB 限制")
+                temporary.write(chunk)
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        if not _valid_asset_file(Path(temporary_name)):
+            raise ValueError("素材下載內容不是有效圖片")
+        os.chmod(temporary_name, 0o600)
+        os.replace(temporary_name, destination)
+        temporary_name = None
+        log.info("素材已同步且驗證完成：%s", destination.name)
+        return True
+    except (requests.RequestException, OSError, ValueError):
+        log.exception("素材同步失敗，保留舊圖片並於下一輪重試：%s", asset_id)
+        return False
+    finally:
+        if temporary_name:
+            Path(temporary_name).unlink(missing_ok=True)
+        if "response" in locals():
+            getattr(response, "close", lambda: None)()
+
+
+def sync_assets(server_url: str, headers: dict, resolved: dict) -> bool:
+    """同步目前 layout 的圖片；任一張未就緒時回傳 False，呼叫者不可切換新版面。"""
     assets_dir = agent_config.BASE_DIR / "data" / "assets"
+    ready = True
     for element in resolved.get("elements", []):
+        if not isinstance(element, dict):
+            ready = False
+            continue
         if element.get("module_id") != "image":
             continue
-        asset_id = (element.get("config") or {}).get("asset_id")
-        filename = (element.get("data") or {}).get("filename")
-        if not asset_id or not filename or (assets_dir / filename).is_file():
+        config = element.get("config") or {}
+        data = element.get("data") or {}
+        asset_id = config.get("asset_id") if isinstance(config, dict) else None
+        filename = _safe_asset_filename(data.get("filename") if isinstance(data, dict) else None)
+        # 沒選圖片是圖片模組的正常空白狀態，不影響整張 layout 套用。
+        if not asset_id:
             continue
-        assets_dir.mkdir(parents=True, exist_ok=True)
-        try:
-            response = requests.get(f"{server_url}/api/v1/device/assets/{asset_id}", headers=headers, timeout=30)
-            response.raise_for_status()
-            destination = assets_dir / filename
-            temporary = destination.with_suffix(destination.suffix + ".tmp")
-            temporary.write_bytes(response.content)
-            temporary.replace(destination)
-            log.info("素材已同步：%s", filename)
-        except requests.RequestException:
-            log.exception("素材同步失敗，下一輪會重試：%s", asset_id)
+        if not isinstance(asset_id, str) or not filename:
+            log.warning("新版面含有不完整圖片資料，暫不套用：asset_id=%r filename=%r", asset_id, filename)
+            ready = False
+            continue
+        destination = assets_dir / filename
+        if destination.is_file():
+            try:
+                if _valid_asset_file(destination):
+                    continue
+                log.warning("本機素材驗證失敗，會重新下載：%s", filename)
+            except OSError:
+                pass
+        if not _download_asset(server_url, headers, asset_id, destination):
+            ready = False
+    return ready
 
 
 def run() -> None:
@@ -155,16 +226,25 @@ def run() -> None:
                 fresh_layout = fetch_layout(server_url, headers)
                 if not _valid_cached_layout(fresh_layout):
                     raise ValueError("Server 回傳的 layout 格式不完整")
-                try:
-                    save_layout_cache(fresh_layout)
-                except OSError:
-                    # 儲存空間或檔案權限問題不能妨礙已驗證的當前版面顯示；記錄後
-                    # 下輪會重試保存，既有快取也不會被破壞。
-                    log.exception("無法保存離線版面快取，這次仍使用 Server 新版面")
-                resolved = fresh_layout
                 last_poll = now
+                assets_ready = sync_assets(server_url, headers, fresh_layout)
+                if not assets_ready and resolved is not None:
+                    # 已有畫面時絕不讓未同步圖片的新版面蓋掉舊圖；下一個 poll 完整
+                    # 下載並驗證後才切換。
+                    log.warning("新版面仍有圖片下載中，保留目前已套用版面")
+                    continue
+                resolved = fresh_layout
                 fetched_layout = True
-                sync_assets(server_url, headers, resolved)
+                if assets_ready:
+                    try:
+                        save_layout_cache(fresh_layout)
+                    except OSError:
+                        # 儲存空間或檔案權限問題不能妨礙已驗證的當前版面顯示；記錄後
+                        # 下輪會重試保存，既有快取也不會被破壞。
+                        log.exception("無法保存離線版面快取，這次仍使用 Server 新版面")
+                else:
+                    # 冷啟動沒有上一份版面可保留時會顯示安全佔位，且不污染離線快取。
+                    log.warning("尚無可保留的舊版面；圖片完成同步前暫以佔位顯示")
                 if driver is None:
                     driver = build_driver(resolved["profile"])
                 report_telemetry(server_url, headers, {"status": "online", "agent_version": "v1", "refresh_mode": last_mode})

@@ -1,4 +1,4 @@
-"""硬體診斷小工具：依序嘗試初始化各驅動（Inky pHAT / 微雪 4.26" / UPS INA219），
+"""硬體診斷小工具：依序嘗試初始化各驅動（Inky pHAT / 微雪 4.26"／7.5" V2 / UPS INA219），
 回報哪一個能用、哪一個失敗（連同原始錯誤訊息），方便上機後快速確認接線/驅動安裝
 狀況，不需要先設定 device_agent/config.yaml，也跟 layout/伺服器無關。
 
@@ -6,7 +6,7 @@
     python -m device_agent.detect_hardware              # 只測初始化/讀值，不動螢幕
     python -m device_agent.detect_hardware --show        # 額外對能初始化成功的螢幕
                                                            # 推一張測試圖（會真的刷新面板）
-    python -m device_agent.detect_hardware --only inky   # 只測其中一項
+    python -m device_agent.detect_hardware --only waveshare-7in5-v2  # 只測其中一項
 """
 from __future__ import annotations
 
@@ -63,6 +63,23 @@ def check_waveshare(show: bool) -> None:
             print(f"  x 推送測試圖失敗：{exc}")
 
 
+def check_waveshare_7in5_v2(show: bool) -> None:
+    print('\n[微雪 7.5 吋 e-Paper HAT V2（黑白，800×480）] 嘗試初始化...')
+    try:
+        from device_agent.drivers.waveshare_7in5_v2_driver import Waveshare7In5V2Driver
+        driver = Waveshare7In5V2Driver()
+    except Exception as exc:  # noqa: BLE001
+        print(f"  x 失敗：{exc}")
+        return
+    print("  ok 初始化成功（使用 official/ep_python 的 epd7in5_V2 控制器驅動）")
+    if show:
+        try:
+            driver.show(_test_image((800, 480), "epagerPi 7.5 V2 OK"), mode="full")
+            print("  ok 已推送測試圖（請看螢幕）")
+        except Exception as exc:  # noqa: BLE001
+            print(f"  x 推送測試圖失敗：{exc}")
+
+
 def check_ups() -> None:
     print("\n[UPS HAT (C) / INA219] 嘗試讀取電量...")
     try:
@@ -84,7 +101,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="epagerPi 硬體診斷工具")
     parser.add_argument("--show", action="store_true",
                          help="連同推送一張測試圖到能初始化成功的螢幕（會真的刷新面板）")
-    parser.add_argument("--only", choices=["inky", "waveshare", "ups"], help="只測其中一項")
+    parser.add_argument("--only", choices=["inky", "waveshare", "waveshare-7in5-v2", "ups"], help="只測其中一項")
     args = parser.parse_args()
 
     print("epagerPi 硬體診斷工具 —— 只測「能不能初始化/讀到值」，不代表畫面或電量數字一定正確。")
@@ -93,6 +110,8 @@ def main() -> None:
         check_inky(args.show)
     if args.only in (None, "waveshare"):
         check_waveshare(args.show)
+    if args.only in (None, "waveshare-7in5-v2"):
+        check_waveshare_7in5_v2(args.show)
     if args.only in (None, "ups"):
         check_ups()
 
