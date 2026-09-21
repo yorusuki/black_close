@@ -24,6 +24,7 @@ def create_app() -> Flask:
     workspace_store.migrate_legacy_json()
     workspace_store.upgrade_default_work_layout()
     workspace_store.upgrade_default_mascot_interval()
+    workspace_store.upgrade_default_workday_deadline()
     workspace_store.upgrade_default_off_work_layout()
     workspace_store.ensure_default_lunch_pages()
     workspace_store.ensure_default_weekend_pages()

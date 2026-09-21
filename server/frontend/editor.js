@@ -40,6 +40,22 @@ function option(select, values, label, selectedValue = select.value) {
 }
 function moduleFor(item) { return state.modules.find((module) => module.module_id === item.module_id); }
 function selectedElement() { return state.page?.content?.elements?.find((item) => item.instance_id === state.selected) || null; }
+function partialRefreshMinimum(device = editorDevice()) {
+  const value = Number(device?.profile?.partial_refresh_min_interval_seconds);
+  return device?.profile?.partial_refresh && Number.isFinite(value) && value >= 1 ? value : null;
+}
+function isPartialRefreshSetting(schema) { return schema?.partial_refresh_interval === true; }
+function validatePartialRefreshSettings(item, module) {
+  const minimum = partialRefreshMinimum(); if (!minimum || !module) return null;
+  for (const schema of module.config_schema || []) {
+    if (!isPartialRefreshSetting(schema)) continue;
+    const value = Number(item.config?.[schema.key]);
+    if (!Number.isFinite(value)) return `「${schema.label}」必須是秒數`;
+    if (schema.allow_zero && value === 0) continue;
+    if (value < minimum) return `「${schema.label}」不得低於 ${minimum.toFixed(1)} 秒（目前面板的安全局刷下限）`;
+  }
+  return null;
+}
 function localTime(value) {
   if (!value) return "尚未收到回報";
   const date = new Date(value); return Number.isNaN(date.valueOf()) ? "時間格式異常" : date.toLocaleString("zh-TW", { hour12: false });
@@ -292,16 +308,19 @@ function sourceEditor(value, fallback = "") {
   const source = sourceConfig(value, fallback); const root = document.createElement("fieldset"); root.className = "source-editor";
   const legend = document.createElement("legend"); legend.textContent = "數值來源"; root.append(legend);
   const type = document.createElement("select"); type.dataset.sourceType = "true";
-  [["manual", "手動填寫"], ["battery", "Pi 電池資料"], ["time_until", "距離指定時間"], ["time_progress", "時間進度"], ["http", "HTTP API"]].forEach(([value, text]) => type.append(new Option(text, value)));
+  [["manual", "手動填寫"], ["battery", "Pi 電池資料"], ["time_until", "距離指定時間"], ["time_progress", "時間進度"], ["attendance_workday_until", "距離打卡後下班"], ["attendance_workday_progress", "打卡後工作進度"], ["http", "HTTP API"]].forEach(([value, text]) => type.append(new Option(text, value)));
   type.value = source.type || "manual"; const kind = document.createElement("label"); kind.textContent = "資料類型"; kind.append(type); root.append(kind);
   const details = document.createElement("div"); details.className = "source-fields";
   details.append(
     field("手動數值／文字", source.value, "text", { sourceField: "value", sourceFor: "manual" }),
     field("電池欄位", source.field || "percent", "text", { sourceField: "field", sourceFor: "battery" }),
-    field("無資料時顯示", source.fallback ?? fallback, "text", { sourceField: "fallback", sourceFor: "battery,time_until,time_progress,http" }),
+    field("無資料時顯示", source.fallback ?? fallback, "text", { sourceField: "fallback", sourceFor: "battery,time_until,time_progress,attendance_workday_until,attendance_workday_progress,http" }),
     field("目標時間", source.target, "time", { sourceField: "target", sourceFor: "time_until" }),
     field("開始時間", source.start, "time", { sourceField: "start", sourceFor: "time_progress" }),
     field("結束時間", source.end, "time", { sourceField: "end", sourceFor: "time_progress" }),
+    field("未打卡時起始", source.fallback_start || "09:00", "time", { sourceField: "fallbackStart", sourceFor: "attendance_workday_until,attendance_workday_progress" }),
+    field("未打卡時下班", source.fallback_end || "18:30", "time", { sourceField: "fallbackEnd", sourceFor: "attendance_workday_until,attendance_workday_progress" }),
+    field("打卡後工時（分鐘）", source.work_minutes ?? 541, "number", { sourceField: "workMinutes", sourceFor: "attendance_workday_until,attendance_workday_progress" }),
     field("API 網址", source.url, "text", { sourceField: "url", sourceFor: "http" }),
     field("資料路徑（選填）", source.path, "text", { sourceField: "path", sourceFor: "http" }),
     field("逾時秒數", source.timeout ?? 5, "number", { sourceField: "timeout", sourceFor: "http" }),
@@ -315,6 +334,7 @@ function readSource(root) {
   if (type === "battery") return { type, field: get("field") || "percent", fallback: get("fallback") };
   if (type === "time_until") return { type, target: get("target"), fallback: get("fallback") };
   if (type === "time_progress") return { type, start: get("start"), end: get("end"), fallback: get("fallback") };
+  if (["attendance_workday_until", "attendance_workday_progress"].includes(type)) return { type, work_minutes: Number(get("workMinutes")) || 541, fallback_start: get("fallbackStart") || "09:00", fallback_end: get("fallbackEnd") || "18:30", fallback: get("fallback") };
   return { type: "http", url: get("url"), path: get("path"), fallback: get("fallback"), timeout: Number(get("timeout")) || 5 };
 }
 function complexButton(text, action) {
@@ -397,12 +417,13 @@ function countdownsEditor(schema, item) {
     const header = document.createElement("div"); header.className = "frame-card-header"; const title = document.createElement("strong"); title.textContent = `事件 ${index + 1}`;
     const remove = complexButton("移除事件", () => updateComplex((config) => { config[schema.key] = (config[schema.key] || []).filter((_, position) => position !== index); })); header.append(title, remove);
     const fields = document.createElement("div"); fields.className = "frame-fields";
-    const kind = field("倒數模式", event?.kind || "daily_time", "select", { countdownField: "kind", options: [["daily_time", "每日固定時間"], ["date_time", "指定日期時間"]] });
+    const kind = field("倒數模式", event?.kind || "daily_time", "select", { countdownField: "kind", options: [["daily_time", "每日固定時間"], ["date_time", "指定日期時間"], ["attendance_workday", "依上班打卡（9 小時 1 分）"]] });
     const time = field("每天目標時間", event?.time || "18:30", "time", { countdownField: "time" });
     const dateTime = field("指定日期時間", event?.datetime || "", "datetime-local", { countdownField: "datetime" });
-    const sync = () => { const daily = kind.querySelector("select").value === "daily_time"; time.hidden = !daily; dateTime.hidden = daily; };
+    const fallback = field("未打卡時下班", event?.fallback_time || "18:30", "time", { countdownField: "fallback_time" });
+    const sync = () => { const value = kind.querySelector("select").value; time.hidden = value !== "daily_time"; dateTime.hidden = value !== "date_time"; fallback.hidden = value !== "attendance_workday"; };
     kind.querySelector("select").onchange = sync; sync();
-    fields.append(field("事件名稱", event?.label || "", "text", { countdownField: "label" }), kind, time, dateTime); card.append(header, fields); root.append(card);
+    fields.append(field("事件名稱", event?.label || "", "text", { countdownField: "label" }), kind, time, dateTime, fallback); card.append(header, fields); root.append(card);
   });
   root.append(complexButton("新增倒數事件", () => updateComplex((config) => { (config[schema.key] ||= []).push({ label: "新的目標", kind: "daily_time", time: "18:30" }); })));
   return root;
@@ -427,7 +448,7 @@ function collectModuleConfig(item) {
     if (root.dataset.complex === "frames") item.config[key] = [...root.querySelectorAll("[data-frame]")].map((frame) => ({ art: frame.querySelector('[data-frame-field="art"]')?.value || "", line: frame.querySelector('[data-frame-field="line"]')?.value || "" }));
     if (root.dataset.complex === "messages") item.config[key] = [...root.querySelectorAll("[data-message]")].map((message) => message.querySelector('[data-message-field="text"]')?.value || "").filter(Boolean);
     if (root.dataset.complex === "todos") item.config[key] = [...root.querySelectorAll("[data-todo]")].map((todo) => ({ text: todo.querySelector('[data-todo-field="text"]')?.value || "", done: todo.querySelector('[data-todo-field="done"]')?.checked })).filter((todo) => todo.text.trim());
-    if (root.dataset.complex === "countdowns") item.config[key] = [...root.querySelectorAll("[data-countdown]")].map((event) => ({ label: event.querySelector('[data-countdown-field="label"]')?.value || "", kind: event.querySelector('[data-countdown-field="kind"]')?.value || "daily_time", time: event.querySelector('[data-countdown-field="time"]')?.value || "", datetime: event.querySelector('[data-countdown-field="datetime"]')?.value || "" }));
+    if (root.dataset.complex === "countdowns") item.config[key] = [...root.querySelectorAll("[data-countdown]")].map((event) => ({ label: event.querySelector('[data-countdown-field="label"]')?.value || "", kind: event.querySelector('[data-countdown-field="kind"]')?.value || "daily_time", time: event.querySelector('[data-countdown-field="time"]')?.value || "", datetime: event.querySelector('[data-countdown-field="datetime"]')?.value || "", fallback_time: event.querySelector('[data-countdown-field="fallback_time"]')?.value || "18:30", work_minutes: 541 }));
   }
 }
 function renderInspector() {
@@ -439,7 +460,19 @@ function renderInspector() {
     if (schema.type === "json") { fields.append(complexEditor(schema, item)); continue; }
     if (schema.type === "boolean") { fields.append(check(schema.label || schema.key, item.config?.[schema.key] ?? schema.default, { key: schema.key, type: "boolean" })); continue; }
     const input = field(schema.label || schema.key, item.config?.[schema.key] ?? schema.default ?? "", schema.type === "number" ? "number" : schema.type === "select" ? "select" : "text", { key: schema.key, type: schema.type || "text", options: schema.options || [] });
-    const control = input.querySelector("input, select"); if (schema.type === "number") { if (schema.min !== undefined) control.min = String(schema.min); if (schema.max !== undefined) control.max = String(schema.max); }
+    const control = input.querySelector("input, select"); if (schema.type === "number") {
+      if (schema.min !== undefined) control.min = String(schema.min); if (schema.max !== undefined) control.max = String(schema.max);
+      if (isPartialRefreshSetting(schema)) {
+        const minimum = partialRefreshMinimum();
+        control.step = "0.1";
+        if (minimum !== null) {
+          control.min = String(minimum);
+          const safety = document.createElement("span"); safety.className = "field-help";
+          safety.textContent = `此 ${modelLabel[editorDevice()?.model_id] || "面板"} 的安全局刷下限為 ${minimum.toFixed(1)} 秒。${schema.allow_zero ? "0 表示固定不輪替。" : ""}`;
+          input.append(safety);
+        }
+      }
+    }
     if (schema.help) { const help = document.createElement("span"); help.className = "field-help"; help.textContent = schema.help; input.append(help); }
     fields.append(input);
   }
@@ -469,10 +502,13 @@ function addModule(moduleId) {
 }
 function applyElement(event) {
   event.preventDefault(); const item = selectedElement(); if (!item) return;
+  const previous = clone(item);
   const values = ["el-x", "el-y", "el-w", "el-h", "el-z", "el-refresh"].map((id) => Number(el(id).value)); if (values.some((value) => !Number.isFinite(value))) { notify("位置與尺寸必須是數字", true); return; }
   const [x, y, width, height, z, refresh] = values; if (x < 0 || y < 0 || width < 1 || height < 1 || refresh < 1) { notify("位置、尺寸與更新秒數不正確", true); return; }
   item.x = clamp(x, 0, state.canvas.width - width); item.y = clamp(y, 0, state.canvas.height - height); item.w = Math.min(width, state.canvas.width - item.x); item.h = Math.min(height, state.canvas.height - item.y); item.z = z; item.refresh_interval = refresh;
   collectModuleConfig(item);
+  const partialError = validatePartialRefreshSettings(item, moduleFor(item));
+  if (partialError) { Object.assign(item, previous); notify(partialError, true); return; }
   state.inspectorDirty = false;
   renderPage(); notify("元件設定已套用，記得儲存");
 }

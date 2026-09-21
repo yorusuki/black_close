@@ -31,11 +31,11 @@ _WAVESHARE_WORK_LAYOUT = {
             "refresh_policy": "partial",
             "config": {
                 "title": "今日生存進度",
-                "value_source": {"type": "time_progress", "start": "09:00", "end": "18:30"},
+                "value_source": {"type": "attendance_workday_progress", "work_minutes": 541, "fallback_start": "09:00", "fallback_end": "18:30"},
                 "min": 0, "max": 100, "unit": "%",
                 "footer_lines": [
                     {"text": "距離下班", "center": False},
-                    {"big": True, "center": True, "value_source": {"type": "time_until", "target": "18:30"}},
+                    {"big": True, "center": True, "value_source": {"type": "attendance_workday_until", "work_minutes": 541, "fallback_start": "09:00", "fallback_end": "18:30"}},
                 ],
             },
         },
@@ -144,7 +144,7 @@ _WAVESHARE_7IN5_DASHBOARD_LAYOUT = {
     "elements": [
         {"instance_id": "clock-bar-top", "module_id": "clock_bar", "x": 0, "y": 0, "w": 800, "h": 48, "z": 10, "refresh_interval": 20, "refresh_policy": "partial", "config": {"time_format": "%H:%M"}},
         {"instance_id": "mascot-work-main", "module_id": "mascot", "x": 24, "y": 64, "w": 432, "h": 224, "z": 1, "refresh_interval": 12, "refresh_policy": "partial", "config": {"interval_seconds": 12}},
-        {"instance_id": "countdown-main", "module_id": "countdown", "x": 480, "y": 64, "w": 296, "h": 112, "z": 1, "refresh_interval": 5, "refresh_policy": "partial", "config": {"title": "下一個目標", "events": [{"label": "距離下班", "kind": "daily_time", "time": "18:30"}], "show_seconds": False}},
+        {"instance_id": "countdown-main", "module_id": "countdown", "x": 480, "y": 64, "w": 296, "h": 112, "z": 1, "refresh_interval": 5, "refresh_policy": "partial", "config": {"title": "下一個目標", "events": [{"label": "距離下班", "kind": "attendance_workday", "work_minutes": 541, "fallback_time": "18:30"}], "show_seconds": False}},
         {"instance_id": "attendance-month", "module_id": "monthly_attendance", "x": 480, "y": 194, "w": 296, "h": 180, "z": 1, "refresh_interval": 60, "refresh_policy": "partial", "config": {"title": "本月出勤", "month_offset": 0, "show_weekends": True, "show_summary": True}},
         {"instance_id": "todo-main", "module_id": "todo_list", "x": 24, "y": 312, "w": 432, "h": 112, "z": 1, "refresh_interval": 60, "refresh_policy": "partial", "config": {"title": "今天只做好這些", "show_completed": True, "items": [{"text": "完成最重要的一件事", "done": False}, {"text": "喝水、起身、呼吸", "done": False}]}},
         {"instance_id": "ticker-bottom", "module_id": "ticker", "x": 24, "y": 440, "w": 752, "h": 32, "z": 2, "refresh_interval": 10, "refresh_policy": "partial", "config": {"messages": ["今天也辛苦了，下一次休息值得先排進行事曆。", "記得喝水；訊息可以晚點回，人不行。"], "message_interval_seconds": 120, "scroll_step_seconds": 10, "pixels_per_step": 16}},
@@ -177,7 +177,7 @@ _WAVESHARE_7IN5_FOCUS_LAYOUT = {
     "elements": [
         {"instance_id": "clock-bar-focus", "module_id": "clock_bar", "x": 0, "y": 0, "w": 800, "h": 48, "z": 10, "refresh_interval": 60, "refresh_policy": "partial", "config": {"time_format": "%H:%M"}},
         {"instance_id": "focus-todos", "module_id": "todo_list", "x": 24, "y": 72, "w": 432, "h": 328, "z": 1, "refresh_interval": 60, "refresh_policy": "partial", "config": {"title": "今天只做好這些", "title_scale": 130, "item_scale": 120, "show_completed": True, "items": [{"text": "完成最重要的一件事", "done": False}, {"text": "回覆必要訊息", "done": False}, {"text": "喝水、起身、呼吸", "done": False}, {"text": "把下一步留給明天的自己", "done": False}]}},
-        {"instance_id": "focus-countdown", "module_id": "countdown", "x": 480, "y": 72, "w": 296, "h": 128, "z": 1, "refresh_interval": 60, "refresh_policy": "partial", "config": {"title": "離下班還有", "events": [{"label": "18:30 準時收工", "kind": "daily_time", "time": "18:30"}], "show_seconds": False, "value_scale": 140}},
+        {"instance_id": "focus-countdown", "module_id": "countdown", "x": 480, "y": 72, "w": 296, "h": 128, "z": 1, "refresh_interval": 60, "refresh_policy": "partial", "config": {"title": "離下班還有", "events": [{"label": "依打卡時間收工", "kind": "attendance_workday", "work_minutes": 541, "fallback_time": "18:30"}], "show_seconds": False, "value_scale": 140}},
         {"instance_id": "focus-attendance", "module_id": "monthly_attendance", "x": 480, "y": 220, "w": 296, "h": 180, "z": 1, "refresh_interval": 300, "refresh_policy": "partial", "config": {"title": "本月生存紀錄", "month_offset": 0, "show_weekends": True, "show_summary": True}},
         {"instance_id": "focus-ticker", "module_id": "ticker", "x": 24, "y": 424, "w": 752, "h": 32, "z": 2, "refresh_interval": 30, "refresh_policy": "partial", "config": {"messages": ["一次只做一件事，剩下的事情請先排隊。", "專注不是把所有事做完，是先決定哪件事不用現在做。"], "message_interval_seconds": 300, "scroll_step_seconds": 30, "pixels_per_step": 12}},
     ],

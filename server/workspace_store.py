@@ -5,6 +5,7 @@ import datetime as dt
 import hashlib
 import hmac
 import json
+import math
 import secrets
 import sqlite3
 import uuid
@@ -25,6 +26,7 @@ _PLACEHOLDER_USER_ID = "legacy-unassigned"
 _MIGRATION_KEY = "legacy_json_v1"
 _WORK_LAYOUT_UPGRADE_KEY = "waveshare_work_layout_v2"
 _WORK_LAYOUT_MASCOT_INTERVAL_UPGRADE_KEY = "waveshare_work_layout_mascot_interval_v3"
+_WORKDAY_DEADLINE_UPGRADE_KEY = "attendance_based_workday_deadline_v1"
 _REFRESH_POLICY_UPGRADE_KEY = "waveshare_refresh_policy_v2"
 _OFF_WORK_LAYOUT_UPGRADE_KEY = "waveshare_off_work_greetings_v1"
 _REFRESH_POLICY_DAILY_DEFAULT_UPGRADE_KEY = "waveshare_refresh_daily_default_v3"
@@ -35,12 +37,18 @@ _QUIET_HOURS_DEFAULT_UPGRADE_KEY = "device_display_quiet_hours_v1"
 _QUIET_HOURS_WEEKEND_UPGRADE_KEY = "device_display_quiet_hours_weekend_v2"
 _ONLINE_AFTER_SECONDS = 180
 _DEFAULT_QUIET_HOURS = {"enabled": True, "start": "20:00", "end": "08:30", "pause_weekends": True}
-_HARDWARE_PROFILE_FIELDS = ("driver", "resolution", "color_mode", "partial_refresh")
+_HARDWARE_PROFILE_FIELDS = (
+    "driver", "resolution", "color_mode", "partial_refresh",
+    "panel_partial_refresh_seconds", "partial_refresh_min_interval_seconds",
+    "partial_refresh_tick_seconds",
+)
 _DEFAULT_DEVICE_PROFILES = {
-    "inky_phat": {"driver": "inky_phat", "resolution": [212, 104], "color_mode": "3color", "partial_refresh": False},
-    "waveshare_4in26": {"driver": "waveshare_4in26", "resolution": [800, 480], "color_mode": "1bit", "partial_refresh": True, "full_refresh_interval_seconds": 86_400, "server_full_refresh_daily_at": "12:00", "full_refresh_daily_at": "12:00", "display_quiet_hours": _DEFAULT_QUIET_HOURS},
-    "waveshare_7in5_v2": {"driver": "waveshare_7in5_v2", "resolution": [800, 480], "color_mode": "1bit", "partial_refresh": True, "full_refresh_interval_seconds": 86_400, "server_full_refresh_daily_at": "12:00", "full_refresh_daily_at": "12:00", "display_quiet_hours": _DEFAULT_QUIET_HOURS},
-    "mock": {"driver": "mock", "resolution": [800, 480], "color_mode": "1bit", "partial_refresh": True, "full_refresh_interval_seconds": 86_400, "server_full_refresh_daily_at": "12:00", "full_refresh_daily_at": "12:00", "display_quiet_hours": _DEFAULT_QUIET_HOURS},
+    "inky_phat": {"driver": "inky_phat", "resolution": [212, 104], "color_mode": "3color", "partial_refresh": False, "panel_partial_refresh_seconds": None, "partial_refresh_min_interval_seconds": None, "partial_refresh_tick_seconds": None},
+    # Waveshare 標示的實驗值為 4.26 吋 0.7 秒、7.5 吋 V2 0.4 秒；實際
+    # 面板輸出一律留三倍緩衝，避免時鐘誤差、SPI 傳輸和溫度差異讓局刷重疊。
+    "waveshare_4in26": {"driver": "waveshare_4in26", "resolution": [800, 480], "color_mode": "1bit", "partial_refresh": True, "panel_partial_refresh_seconds": 0.7, "partial_refresh_min_interval_seconds": 2.1, "partial_refresh_tick_seconds": 0.5, "full_refresh_interval_seconds": 86_400, "server_full_refresh_daily_at": "12:00", "full_refresh_daily_at": "12:00", "display_quiet_hours": _DEFAULT_QUIET_HOURS},
+    "waveshare_7in5_v2": {"driver": "waveshare_7in5_v2", "resolution": [800, 480], "color_mode": "1bit", "partial_refresh": True, "panel_partial_refresh_seconds": 0.4, "partial_refresh_min_interval_seconds": 1.2, "partial_refresh_tick_seconds": 0.2, "full_refresh_interval_seconds": 86_400, "server_full_refresh_daily_at": "12:00", "full_refresh_daily_at": "12:00", "display_quiet_hours": _DEFAULT_QUIET_HOURS},
+    "mock": {"driver": "mock", "resolution": [800, 480], "color_mode": "1bit", "partial_refresh": True, "panel_partial_refresh_seconds": None, "partial_refresh_min_interval_seconds": None, "partial_refresh_tick_seconds": None, "full_refresh_interval_seconds": 86_400, "server_full_refresh_daily_at": "12:00", "full_refresh_daily_at": "12:00", "display_quiet_hours": _DEFAULT_QUIET_HOURS},
 }
 
 
@@ -283,6 +291,54 @@ def upgrade_default_mascot_interval() -> int:
             "INSERT INTO schema_metadata(key,value) VALUES(?,?)",
             (_WORK_LAYOUT_MASCOT_INTERVAL_UPGRADE_KEY, str(updated)),
         )
+        return updated
+
+
+def upgrade_default_workday_deadline() -> int:
+    """只升級仍使用已知固定 18:30 的內建下班倒數，不覆寫自訂目標。"""
+    with _db() as con:
+        done = con.execute("SELECT 1 FROM schema_metadata WHERE key=?", (_WORKDAY_DEADLINE_UPGRADE_KEY,)).fetchone()
+        if done:
+            return 0
+        rows = con.execute("SELECT id,content_json FROM pages").fetchall()
+        updated = 0
+        for row in rows:
+            content = _parse_json(row["content_json"], {})
+            elements = content.get("elements") if isinstance(content, dict) else None
+            if not isinstance(elements, list):
+                continue
+            changed = False
+            for element in elements:
+                if not isinstance(element, dict) or not isinstance(element.get("config"), dict):
+                    continue
+                element_config = element["config"]
+                if element.get("instance_id") == "workday-progress":
+                    value_source = element_config.get("value_source")
+                    footer = element_config.get("footer_lines")
+                    if (
+                        value_source == {"type": "time_progress", "start": "09:00", "end": "18:30"}
+                        and isinstance(footer, list) and len(footer) > 1
+                        and isinstance(footer[1], dict)
+                        and footer[1].get("value_source") == {"type": "time_until", "target": "18:30"}
+                    ):
+                        element_config["value_source"] = {"type": "attendance_workday_progress", "work_minutes": 541, "fallback_start": "09:00", "fallback_end": "18:30"}
+                        footer[1]["value_source"] = {"type": "attendance_workday_until", "work_minutes": 541, "fallback_start": "09:00", "fallback_end": "18:30"}
+                        changed = True
+                if element.get("instance_id") in {"countdown-main", "focus-countdown"}:
+                    events = element_config.get("events")
+                    if (
+                        isinstance(events, list) and len(events) == 1 and isinstance(events[0], dict)
+                        and events[0].get("kind") == "daily_time" and events[0].get("time") == "18:30"
+                    ):
+                        events[0] = {
+                            "label": events[0].get("label") or "距離下班",
+                            "kind": "attendance_workday", "work_minutes": 541, "fallback_time": "18:30",
+                        }
+                        changed = True
+            if changed:
+                con.execute("UPDATE pages SET content_json=? WHERE id=?", (_json(content), row["id"]))
+                updated += 1
+        con.execute("INSERT INTO schema_metadata(key,value) VALUES(?,?)", (_WORKDAY_DEADLINE_UPGRADE_KEY, str(updated)))
         return updated
 
 
@@ -648,7 +704,18 @@ def ensure_first_owner(line_sub: str, display_name: str) -> dict | None:
 def _public_device(row: sqlite3.Row) -> dict:
     out = dict(row)
     out.pop("token_hash", None)
-    out["profile"] = _parse_json(out.pop("profile_json", "{}"), {})
+    profile = _parse_json(out.pop("profile_json", "{}"), {})
+    if not isinstance(profile, dict):
+        profile = {}
+    # 舊設備的 profile_json 沒有新欄位時，也要在管理台與下發給 Pi 的 layout
+    # 帶上型號能力；不需要改 schema 或要求使用者重新建立設備。
+    if out.get("model_id") in _DEFAULT_DEVICE_PROFILES:
+        defaults = _default_device_profile(out["model_id"])
+        # 不能用整份 default 補值：例如使用者將每日全刷切回間隔模式時，
+        # full_refresh_daily_at 被刻意移除，讀取資料不應把它重新加回來。
+        for key in _HARDWARE_PROFILE_FIELDS:
+            profile[key] = defaults[key]
+    out["profile"] = profile
     out["active"], out["hidden"] = bool(out["active"]), bool(out["hidden"])
     return out
 
@@ -897,6 +964,10 @@ def _validate_page_content(content: Any, model_id: str) -> dict:
     if resolution is None:
         raise ValueError("頁面缺少可驗證的面板型號")
     canvas_width, canvas_height = resolution
+    # 依面板型號的下限，必須在 Server 儲存時就擋下來；前端提示只是輔助，
+    # 不能成為直接呼叫 API 時可繞過的唯一防線。
+    partial_minimum = partial_refresh_min_interval(model_id)
+    from .modules.registry import get_module
     for index, element in enumerate(content["elements"], start=1):
         if not isinstance(element, dict):
             raise ValueError(f"第 {index} 個元件格式不正確")
@@ -906,7 +977,41 @@ def _validate_page_content(content: Any, model_id: str) -> dict:
         x, y, width, height = values["x"], values["y"], values["w"], values["h"]
         if x < 0 or y < 0 or width < 1 or height < 1 or x + width > canvas_width or y + height > canvas_height:
             raise ValueError(f"第 {index} 個元件超出 {canvas_width}×{canvas_height} 面板範圍")
+        refresh_interval = element.get("refresh_interval")
+        if refresh_interval is not None and (
+            isinstance(refresh_interval, bool)
+            or not isinstance(refresh_interval, (int, float))
+            or not math.isfinite(refresh_interval)
+            or not 1 <= refresh_interval <= 86_400
+        ):
+            raise ValueError(f"第 {index} 個元件的資料更新秒數必須介於 1 秒至 24 小時")
+
+        module = get_module(element.get("module_id"))
+        module_config = element.get("config", {})
+        if module is None or not isinstance(module_config, dict) or partial_minimum is None:
+            continue
+        for field in module.config_schema:
+            if not field.get("partial_refresh_interval") or field["key"] not in module_config:
+                continue
+            value = module_config[field["key"]]
+            allow_zero = field.get("allow_zero", False)
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+                raise ValueError(f"第 {index} 個元件的「{field['label']}」必須是秒數")
+            if allow_zero and value == 0:
+                continue
+            if value < partial_minimum:
+                raise ValueError(
+                    f"第 {index} 個元件的「{field['label']}」不得低於 {partial_minimum:g} 秒；"
+                    f"此 {model_id} 面板的安全局刷下限為 {partial_minimum:g} 秒"
+                )
     return content
+
+
+def partial_refresh_min_interval(model_id: str) -> float | None:
+    """回傳型號固定的局刷安全下限；非局刷面板不提供此設定。"""
+    profile = _DEFAULT_DEVICE_PROFILES.get(model_id, {})
+    value = profile.get("partial_refresh_min_interval_seconds")
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
 
 def page_preset(model_id: str, preset: str | None) -> dict:
@@ -1280,6 +1385,14 @@ def _page_layout(device: dict, page: dict | None, now: dt.datetime, *, scene: st
             # 新版 API 的 layout 必須與管理台／EIP 排程共用 SQLite 正本。舊版
             # compositor 仍可透過各模組 fetch_data() 讀舊 JSON，維持相容。
             data = attendance_snapshot(device["user_id"], now.date())
+        elif item.get("module_id") in {"progress_bar", "countdown"}:
+            try:
+                data = module.fetch_data(item.get("config") or {})
+            except Exception:
+                data = {}
+            # 工作時間推算只傳必要的當日打卡資料；Pi 離線時仍保留最後一次
+            # layout 內的 snapshot，能繼續計算到「上班 + 9 小時 1 分鐘」。
+            data["attendance"] = attendance_snapshot(device["user_id"], now.date())
         elif item.get("module_id") == "monthly_attendance":
             data = attendance_month_snapshot(device["user_id"], now.date(), (item.get("config") or {}).get("month_offset", 0))
         else:

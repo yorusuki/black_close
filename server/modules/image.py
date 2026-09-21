@@ -27,7 +27,9 @@ class ImageModule(BaseModule):
     description = "顯示素材庫裡的一張圖片（先在編輯器的「圖片素材庫」面板上傳）。"
     default_size = (160, 160)
     min_refresh_interval = 300
-    refresh_policy = "full"
+    # 圖片本身是靜態素材，不會自行週期更新；但在相同位置替換為另一張圖時，
+    # 局刷可完整覆蓋這個元素範圍，無須為此觸發整幅閃爍。
+    refresh_policy = "partial"
     config_schema = [
         {"key": "asset_id", "label": "素材 ID（從圖片素材庫面板點選）", "type": "text", "default": ""},
         {"key": "fit", "label": "填滿方式（cover/contain/stretch）", "type": "text", "default": "cover"},

@@ -8,9 +8,10 @@ from PIL import Image, ImageDraw
 from .. import config
 from .base import BaseModule
 from .drawing import load_font, scaled_font_size
+from .workday import clock_in_target, fallback_target
 
 
-def _next_event(events: list, now: dt.datetime):
+def _next_event(events: list, now: dt.datetime, attendance: dict | None = None):
     candidates = []
     for event in events[:12]:
         if not isinstance(event, dict):
@@ -30,6 +31,12 @@ def _next_event(events: list, now: dt.datetime):
                 else:
                     target = target.astimezone(now.tzinfo)
                 if target <= now:
+                    continue
+            elif kind == "attendance_workday":
+                target = clock_in_target(attendance, now, event.get("work_minutes", 541))
+                if target is None:
+                    target = fallback_target(now, event.get("fallback_time", "18:30"))
+                if target is None:
                     continue
             else:
                 continue
@@ -53,7 +60,7 @@ class CountdownModule(BaseModule):
     display_name = "事件倒數"
     description = "倒數至每天固定時間或指定日期時間；由 Pi 本機時間計算，離線仍可更新。"
     default_size = (280, 112)
-    min_refresh_interval = 5
+    min_refresh_interval = 1
     supports_partial = True
     refresh_policy = "partial"
     always_rerender = True
@@ -61,7 +68,7 @@ class CountdownModule(BaseModule):
         {"key": "title", "label": "標題", "type": "text", "default": "下一個目標"},
         {
             "key": "events", "label": "倒數事件", "type": "json", "editor": "countdowns",
-            "default": [{"label": "距離下班", "kind": "daily_time", "time": "18:30"}],
+            "default": [{"label": "距離下班", "kind": "attendance_workday", "work_minutes": 541, "fallback_time": "18:30"}],
         },
         {"key": "show_seconds", "label": "顯示秒數（會增加局刷頻率）", "type": "boolean", "default": False},
         {"key": "title_scale", "label": "標題字體大小（%）", "type": "number", "default": 100, "min": 60, "max": 200},
@@ -74,7 +81,7 @@ class CountdownModule(BaseModule):
         draw = ImageDraw.Draw(image)
         pad = max(5, min(w, h) // 16)
         now = config.now_local()
-        event = _next_event(cfg.get("events") if isinstance(cfg.get("events"), list) else [], now)
+        event = _next_event(cfg.get("events") if isinstance(cfg.get("events"), list) else [], now, data.get("attendance"))
         title = str(cfg.get("title", "下一個目標")).strip() or "下一個目標"
         title_font = _fit(draw, title, scaled_font_size(h * 0.17, cfg.get("title_scale", 100), minimum=9), w - pad * 2)
         draw.text((pad, pad), title, fill="black", font=title_font)

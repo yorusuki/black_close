@@ -15,6 +15,7 @@ import json
 import requests
 
 from .. import config
+from .workday import workday_window
 
 _TIMEOUT_DEFAULT = 5
 
@@ -38,7 +39,7 @@ def is_network_source(source: dict | None) -> bool:
     return source.get("type", "manual") == "http"
 
 
-def resolve_value(source: dict | None, default=None):
+def resolve_value(source: dict | None, default=None, context: dict | None = None):
     if not source:
         return default
     stype = source.get("type", "manual")
@@ -73,6 +74,19 @@ def resolve_value(source: dict | None, default=None):
         if end <= start:
             return 0
         ratio = (now - start).total_seconds() / (end - start).total_seconds()
+        return round(max(0.0, min(1.0, ratio)) * 100, 1)
+
+    if stype in {"attendance_workday_until", "attendance_workday_progress"}:
+        now = config.now_local()
+        attendance = context.get("attendance") if isinstance(context, dict) else None
+        window = workday_window(source, attendance, now)
+        if window is None:
+            return source.get("fallback", default)
+        start, target = window
+        if stype == "attendance_workday_until":
+            remaining = max(0, int((target - now).total_seconds() // 60))
+            return f"{remaining // 60:02d}:{remaining % 60:02d}"
+        ratio = (now - start).total_seconds() / (target - start).total_seconds()
         return round(max(0.0, min(1.0, ratio)) * 100, 1)
 
     if stype == "http":

@@ -69,7 +69,7 @@ class StatusNoticeModule(BaseModule):
     display_name = "全頁狀態訊息"
     description = "以大字顯示下班、週末或請假提示；下班頁可選擇輪播多句台詞。"
     default_size = (800, 480)
-    min_refresh_interval = 5
+    min_refresh_interval = 1
     supports_partial = True
     refresh_policy = "partial"
     always_rerender = True
@@ -81,7 +81,7 @@ class StatusNoticeModule(BaseModule):
         },
         {
             "key": "interval_seconds", "label": "台詞輪替／局刷間隔（秒）", "type": "number",
-            "default": 60, "min": 0, "max": 3600,
+            "default": 60, "min": 0, "max": 3600, "partial_refresh_interval": True, "allow_zero": True,
             "help": "設為 0 時固定顯示一則台詞，不會輪播；其他值為台詞輪替／局刷秒數。",
         },
     ]
@@ -93,7 +93,7 @@ class StatusNoticeModule(BaseModule):
         title = str(cfg.get("title", ""))
         messages = _messages(cfg)
         try:
-            interval = max(0, min(3600, int(cfg.get("interval_seconds", 60))))
+            interval = max(0.0, min(3600.0, float(cfg.get("interval_seconds", 60))))
         except (TypeError, ValueError):
             interval = 60
         # 靜態模式仍可保留多句文案：依 ISO 週次選一則，因此同一個週末不會

@@ -32,16 +32,17 @@ from __future__ import annotations
 from PIL import Image, ImageDraw
 
 from .base import BaseModule
+from .. import attendance
 from .datasource import is_network_source, resolve_value
 from .drawing import draw_block_bar, load_font, scaled_font_size
 
 
-def _resolve_for_render(source: dict | None, network_value, default=None):
+def _resolve_for_render(source: dict | None, network_value, default=None, context: dict | None = None):
     """render() 時用：http 型別直接吃 fetch_data() 已經解析好、節流過的值；
     其餘型別（本地就能算）在這裡即時重新解析一次。"""
     if is_network_source(source):
         return network_value if network_value is not None else default
-    return resolve_value(source, default)
+    return resolve_value(source, default, context)
 
 
 class ProgressBarModule(BaseModule):
@@ -77,7 +78,7 @@ class ProgressBarModule(BaseModule):
             else:
                 footer_network_values.append(None)
 
-        return {"network_value": network_value, "footer_network_values": footer_network_values}
+        return {"network_value": network_value, "footer_network_values": footer_network_values, "attendance": attendance.get_today_snapshot()}
 
     def render(self, data, size, color_mode, cfg):
         w, h = size
@@ -87,7 +88,7 @@ class ProgressBarModule(BaseModule):
         title = cfg.get("title", "")
         vmin, vmax = cfg.get("min", 0), cfg.get("max", 100)
         unit = cfg.get("unit", "")
-        value = _resolve_for_render(cfg.get("value_source"), data.get("network_value"), vmin)
+        value = _resolve_for_render(cfg.get("value_source"), data.get("network_value"), vmin, data)
 
         ratio = 0.0
         try:
@@ -105,7 +106,7 @@ class ProgressBarModule(BaseModule):
         footer_texts = []
         for i, line in enumerate(footer_lines):
             network_val = footer_network_values[i] if i < len(footer_network_values) else None
-            fv = _resolve_for_render(line.get("value_source"), network_val, None) if "value_source" in line else None
+            fv = _resolve_for_render(line.get("value_source"), network_val, None, data) if "value_source" in line else None
             footer_texts.append((str(fv) if fv is not None else str(line.get("text", "")), line))
 
         # 所有文字、數值條與附註列都先量測。原本以固定 h 比例往下累加，

@@ -71,7 +71,7 @@ class MascotModule(BaseModule):
     display_name = "AA 人物吉祥物"
     description = "在多組「多行 AA 人物 + 台詞」之間輪播，可做成簡易動畫（實際刷新頻率受裝置局部刷新能力限制）。"
     default_size = (800, 150)
-    min_refresh_interval = 5
+    min_refresh_interval = 1
     supports_partial = True
     refresh_policy = "partial"
     always_rerender = True
@@ -79,8 +79,8 @@ class MascotModule(BaseModule):
         {"key": "frames", "label": "影格", "type": "json", "editor": "frames", "default": _DEFAULT_FRAMES},
         {
             "key": "interval_seconds", "label": "AA 輪播／局刷間隔（秒）", "type": "number",
-            "default": 6, "min": 1, "max": 3600,
-            "help": "設定 6 代表 AA 最多每 6 秒換一格並局刷一次；Inky 等不支援局刷的面板不適用。",
+            "default": 6, "min": 1, "max": 3600, "partial_refresh_interval": True,
+            "help": "依目前面板顯示的安全下限設定；AA 最多每個間隔換一格並局刷一次。",
         },
         {"key": "art_scale", "label": "AA 人物字體大小（%）", "type": "number", "default": 100, "min": 60, "max": 200},
         {"key": "line_scale", "label": "語錄字體大小（%）", "type": "number", "default": 100, "min": 60, "max": 200},
@@ -92,7 +92,10 @@ class MascotModule(BaseModule):
         if not isinstance(frames, list) or not frames:
             frames = _DEFAULT_FRAMES
         # config 可能由舊版頁面或 API 輸入，不能只信任管理台的 min/max。
-        interval = max(1, min(3600, int(cfg.get("interval_seconds", 6))))
+        try:
+            interval = max(1.0, min(3600.0, float(cfg.get("interval_seconds", 6))))
+        except (TypeError, ValueError):
+            interval = 6.0
         frame = frames[int(time.time() // interval) % len(frames)]
         if not isinstance(frame, dict):
             frame = {}

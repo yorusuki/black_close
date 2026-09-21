@@ -45,6 +45,7 @@ from . import device_profiles, scenes
 _fetch_cache: dict[tuple, dict] = {}
 _last_element_state: dict[tuple, tuple] = {}
 _last_full_refresh: dict[str, float] = {}
+_last_partial_refresh: dict[str, float] = {}
 _last_scheduled_full_day: dict[str, datetime.date] = {}
 _partial_count_since_full: dict[str, int] = {}
 _last_layout_signature: dict[str, str] = {}
@@ -53,6 +54,7 @@ _last_layout_signature: dict[str, str] = {}
 def reset_device_render_state(device_id: str) -> None:
     """清除單台面板的刷新歷史，讓靜默時段結束後下一張畫面必定全刷。"""
     _last_full_refresh.pop(device_id, None)
+    _last_partial_refresh.pop(device_id, None)
     _last_scheduled_full_day.pop(device_id, None)
     _partial_count_since_full.pop(device_id, None)
     _last_layout_signature.pop(device_id, None)
@@ -194,6 +196,20 @@ def _decide_refresh_mode(
         _last_full_refresh[device_id] = now.timestamp()
         return "full", dirty_boxes
 
+    # 這是最後一道硬體保護：Server/UI 設定、動畫模組、倒數與直接 API 寫入
+    # 都不能讓實際 partial 輸出快過型號指定的安全下限。注意不可在此僅回傳
+    # none 後忘記 dirty 狀態；render_from_elements 會保留未輸出的 hash，直到
+    # 到期時把最新一幀送出。
+    raw_minimum = profile.get("partial_refresh_min_interval_seconds", 1.0)
+    try:
+        partial_minimum = max(1.0, min(60.0, float(raw_minimum)))
+    except (TypeError, ValueError):
+        partial_minimum = 1.0
+    last_partial = _last_partial_refresh.get(device_id)
+    if last_partial is not None and now.timestamp() - last_partial < partial_minimum:
+        return "none", []
+
+    _last_partial_refresh[device_id] = now.timestamp()
     _partial_count_since_full[device_id] = _partial_count_since_full.get(device_id, 0) + 1
     return "partial", dirty_boxes
 
@@ -232,6 +248,7 @@ def render_from_elements(resolved: dict, now: datetime.datetime | None = None):
     layout_changed = _last_layout_signature.get(device_id) != signature
 
     elements = sorted(resolved.get("elements", []), key=lambda e: e.get("z", 0) or 0)
+    next_element_states: dict[tuple, tuple] = {}
     for el in elements:
         module = get_module(el.get("module_id"))
         if module is None:
@@ -257,7 +274,9 @@ def render_from_elements(resolved: dict, now: datetime.datetime | None = None):
             dirty_boxes.append(box)
             policy = el.get("refresh_policy", module.refresh_policy)
             dirty_policies.add(policy if policy in {"auto", "partial", "full"} else "auto")
-        _last_element_state[key] = (state_hash, box)
+        # 只先收集、不立刻寫入。若局刷仍在硬體冷卻時間，下一個 tick 仍要
+        # 看見這個差異，否則最後一幀會被錯誤地當成「已顯示」。
+        next_element_states[key] = (state_hash, box)
 
     if layout_changed:
         # 即使新舊內容剛好相同，切換過的 layout 也要完整清屏一次。
@@ -267,6 +286,8 @@ def render_from_elements(resolved: dict, now: datetime.datetime | None = None):
     refresh_mode, out_boxes = _decide_refresh_mode(
         device_id, profile, dirty_boxes, dirty_policies, now, layout_changed=layout_changed,
     )
+    if refresh_mode != "none":
+        _last_element_state.update(next_element_states)
     _last_layout_signature[device_id] = signature
 
     meta = {
@@ -276,6 +297,7 @@ def render_from_elements(resolved: dict, now: datetime.datetime | None = None):
         "refresh_mode": refresh_mode,
         "dirty_boxes": out_boxes,
         "partial_count_since_full": _partial_count_since_full.get(device_id, 0),
+        "partial_refresh_min_interval_seconds": profile.get("partial_refresh_min_interval_seconds"),
         "rendered_at": now.isoformat(timespec="seconds"),
     }
     return final, meta

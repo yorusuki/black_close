@@ -96,7 +96,7 @@ def provision_7in5(*, source_device_name: str = DEFAULT_SOURCE_DEVICE,
     if target is None:
         inherited = {
             key: value for key, value in source["profile"].items()
-            if key not in {"driver", "resolution", "color_mode", "partial_refresh"}
+            if key not in workspace_store._HARDWARE_PROFILE_FIELDS
         }
         target = workspace_store.create_device(user_id, target_device_name, TARGET_MODEL, inherited)
         token = target.pop("token")
