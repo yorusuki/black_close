@@ -31,11 +31,11 @@
       "refresh_policy": "partial",
       "config": {
         "title": "今日生存進度",
-        "value_source": {"type": "time_progress", "start": "09:00", "end": "18:30"},
+        "value_source": {"type": "attendance_workday_progress", "work_minutes": 541, "fallback_start": "09:00", "fallback_end": "18:30"},
         "min": 0, "max": 100, "unit": "%",
         "footer_lines": [
           {"text": "距離下班", "center": false},
-          {"big": true, "center": true, "value_source": {"type": "time_until", "target": "18:30"}}
+          {"big": true, "center": true, "value_source": {"type": "attendance_workday_until", "work_minutes": 541, "fallback_start": "09:00", "fallback_end": "18:30"}}
         ]
       }
     }

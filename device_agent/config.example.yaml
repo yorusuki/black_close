@@ -11,6 +11,8 @@ device_token: replace-with-device-token
 # [選填，預設 30] 向 Server 取得新版面資料的間隔（秒）；最小 5，不建議調低。
 poll_interval_seconds: 30
 # [選填，預設 1] Pi 本機重新合成與判斷刷新的間隔（秒）；最小 0.5。
+# Waveshare 4.26／7.5 吋收到新版 Server profile 後，會自動分別以最多 0.5／0.2 秒
+# 的內部 tick 配合安全局刷下限；通常不必手動改此設定。
 tick_seconds: 1
 
 # ---- UPS 電量看門狗 ----

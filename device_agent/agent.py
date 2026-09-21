@@ -194,14 +194,33 @@ def sync_assets(server_url: str, headers: dict, resolved: dict) -> bool:
     return ready
 
 
+def effective_tick_seconds(configured_seconds: float, resolved: dict | None) -> float:
+    """以 Server 下發的型號能力縮短本機 renderer tick。
+
+    這不是面板的局刷間隔本身（該間隔仍由 compositor 強制節流），而是讓 7.5
+    吋 1.2 秒、4.26 吋 2.1 秒的安全下限不會被舊有 1 秒輪詢粗略化成更慢的
+    2/3 秒。設定檔的值仍可自行調得更短；沒有新版 profile 時維持舊行為。
+    """
+    profile = resolved.get("profile", {}) if isinstance(resolved, dict) else {}
+    requested = profile.get("partial_refresh_tick_seconds") if isinstance(profile, dict) else None
+    try:
+        candidate = float(requested)
+    except (TypeError, ValueError):
+        return configured_seconds
+    if not 0.1 <= candidate <= 5:
+        return configured_seconds
+    return min(configured_seconds, candidate)
+
+
 def run() -> None:
     from server import config as server_config
     from server.render.compositor import render_from_elements, reset_device_render_state
 
     cfg = agent_config.load_config()
     server_url, headers = cfg["server_url"], _headers(cfg["device_token"])
-    poll_interval, tick_seconds = cfg["poll_interval_seconds"], cfg["tick_seconds"]
+    poll_interval, configured_tick_seconds = cfg["poll_interval_seconds"], cfg["tick_seconds"]
     resolved = load_layout_cache()
+    tick_seconds = effective_tick_seconds(configured_tick_seconds, resolved)
     driver = None
     last_poll = 0.0
     last_mode = "none"
@@ -234,6 +253,7 @@ def run() -> None:
                     log.warning("新版面仍有圖片下載中，保留目前已套用版面")
                     continue
                 resolved = fresh_layout
+                tick_seconds = effective_tick_seconds(configured_tick_seconds, resolved)
                 fetched_layout = True
                 if assets_ready:
                     try:
