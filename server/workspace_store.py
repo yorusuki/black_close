@@ -913,9 +913,19 @@ def page_preset(model_id: str, preset: str | None) -> dict:
     """只回傳白名單中的內建版面，絕不把前端 preset 當成可執行或可任意取檔的名稱。"""
     if preset in (None, "", "blank"):
         return {"elements": []}
-    if preset == "7in5_dashboard" and model_id == "waveshare_7in5_v2":
-        from .default_layouts import waveshare_7in5_dashboard_layout
-        return waveshare_7in5_dashboard_layout()
+    if model_id == "waveshare_7in5_v2":
+        from . import default_layouts
+        presets = {
+            "7in5_dashboard": default_layouts.waveshare_7in5_dashboard_layout,
+            "7in5_lunch": default_layouts.waveshare_7in5_lunch_layout,
+            "7in5_focus": default_layouts.waveshare_7in5_focus_layout,
+            "7in5_off_work": default_layouts.waveshare_7in5_off_work_layout,
+            "7in5_weekend": default_layouts.waveshare_7in5_weekend_layout,
+            "7in5_holiday": default_layouts.waveshare_7in5_holiday_layout,
+            "7in5_leave": default_layouts.waveshare_leave_layout,
+        }
+        if preset in presets:
+            return presets[preset]()
     raise ValueError("所選預設版面不支援此面板型號")
 
 
@@ -1087,12 +1097,24 @@ def get_asset(user_id: str, asset_id: str) -> dict | None:
         return _row(con.execute("SELECT * FROM assets WHERE id=? AND user_id=?", (asset_id, user_id)).fetchone())
 
 
+def get_asset_by_digest(user_id: str, digest: str) -> dict | None:
+    """同一工作區的相同正規化圖片只保留一個圖庫項目。"""
+    with _db() as con:
+        return _row(con.execute("SELECT * FROM assets WHERE user_id=? AND digest=?", (user_id, digest)).fetchone())
+
+
 def add_asset(user_id: str, record: dict, mime_type: str) -> dict:
     with _db() as con:
+        # upload endpoint 會先查一次；這裡再查一次是為了兩個同時上傳相同圖片時，
+        # 仍不會產生重複圖庫項目。資料表既有結構不需 migration。
+        existing = con.execute("SELECT * FROM assets WHERE user_id=? AND digest=?", (user_id, record.get("hash", ""))).fetchone()
+        if existing:
+            return {**dict(existing), "deduplicated": True}
         con.execute("INSERT OR REPLACE INTO assets(id,user_id,filename,original_filename,mime_type,digest,size) VALUES(?,?,?,?,?,?,?)",
                     (record["id"], user_id, record["filename"], record.get("original_filename") or record["id"], mime_type,
                      record.get("hash", ""), int(record.get("size", 0))))
-        return _row(con.execute("SELECT * FROM assets WHERE id=?", (record["id"],)).fetchone())
+        created = _row(con.execute("SELECT * FROM assets WHERE id=?", (record["id"],)).fetchone())
+        return {**created, "deduplicated": False}
 
 
 def attendance_snapshot(user_id: str, day: dt.date) -> dict:

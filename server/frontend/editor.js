@@ -144,10 +144,9 @@ function pagesForDevice(device) { return device ? state.pages.filter((page) => p
 function syncPageOptions() {
   const pages = pagesForDevice(editorDevice());
   option(el("page-select"), pages, (page) => page.name, state.page?.id);
-  const dashboard = el("new-page-preset").querySelector('option[value="7in5_dashboard"]');
-  const supportsDashboard = editorDevice()?.model_id === "waveshare_7in5_v2";
-  dashboard.hidden = !supportsDashboard;
-  if (!supportsDashboard) el("new-page-preset").value = "blank";
+  const supports7in5Presets = editorDevice()?.model_id === "waveshare_7in5_v2";
+  el("new-page-preset").querySelectorAll("[data-7in5-preset]").forEach((preset) => { preset.hidden = !supports7in5Presets; });
+  if (!supports7in5Presets) el("new-page-preset").value = "blank";
 }
 function syncRulePageOptions() {
   const device = state.devices.find((entry) => entry.id === el("rule-device").value);
@@ -493,7 +492,33 @@ function updatePreview() {
   image.onerror = () => { image.hidden = true; empty.hidden = false; empty.textContent = "預覽產生失敗，請確認設備與版面仍存在。"; };
 }
 
-async function loadAssets() { const assets = await api("/api/workspace/assets"); el("asset-list").replaceChildren(...assets.map((asset) => { const image = document.createElement("img"); image.className = "asset"; image.src = `/api/workspace/assets/${encodeURIComponent(asset.id)}`; image.alt = asset.original_filename; return image; })); }
+function assetSize(bytes) {
+  if (!Number.isFinite(Number(bytes))) return "大小未知";
+  const value = Number(bytes);
+  return value < 1024 * 1024 ? `${Math.max(1, Math.round(value / 1024))} KB` : `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+async function copyAssetId(assetId) {
+  try { await navigator.clipboard.writeText(assetId); notify("素材 ID 已複製；可貼入圖片模組"); }
+  catch { notify(`請手動複製素材 ID：${assetId}`, true); }
+}
+
+async function loadAssets() {
+  const assets = await api("/api/workspace/assets");
+  const cards = assets.map((asset) => {
+    const card = document.createElement("article"); card.className = "asset-card";
+    const image = document.createElement("img"); image.className = "asset";
+    image.src = `/api/workspace/assets/${encodeURIComponent(asset.id)}`; image.alt = asset.original_filename || "圖片素材";
+    const details = document.createElement("div"); details.className = "asset-details";
+    const name = document.createElement("strong"); name.textContent = asset.original_filename || "未命名圖片";
+    const meta = document.createElement("span"); meta.textContent = `${assetSize(asset.size)} · 已最佳化`;
+    const id = document.createElement("code"); id.textContent = asset.id;
+    const copy = document.createElement("button"); copy.type = "button"; copy.className = "button button-secondary button-small"; copy.textContent = "複製 ID";
+    copy.onclick = () => { copyAssetId(asset.id); };
+    details.append(name, meta, id, copy); card.append(image, details); return card;
+  });
+  el("asset-list").replaceChildren(...cards);
+}
 async function loadAttendance() { const attendance = await api("/api/workspace/attendance/today"); el("clock-in").value = attendance.clock_in || ""; el("clock-out").value = attendance.clock_out || ""; el("on-leave").checked = attendance.on_leave; el("leave-note").value = attendance.leave_note; el("attendance-status").textContent = `${attendance.date}：${attendance.status}`; }
 function showToken(token) { el("token-value").textContent = token; el("token-dialog").showModal(); }
 function syncRefreshFields() {
@@ -531,7 +556,7 @@ function bindEvents() {
   el("remove-element").onclick = () => { const item = selectedElement(); if (!item || !confirm("刪除此元件？")) return; state.page.content.elements = state.page.content.elements.filter((entry) => entry.instance_id !== item.instance_id); state.selected = null; renderPage(); notify("元件已刪除，記得儲存"); };
   el("rule-form").onsubmit = async (event) => { event.preventDefault(); try { const payload = { name: el("rule-name").value, priority: Number(el("rule-priority").value), ...ruleFormData() }; const editing = state.editingRuleId; await api(editing ? `/api/workspace/rules/${encodeURIComponent(editing)}` : "/api/workspace/rules", { method: editing ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }); state.editingRuleId = null; event.target.reset(); el("rule-form-title").textContent = "新增規則"; el("save-rule").textContent = "新增規則"; el("cancel-rule-edit").hidden = true; await refresh(); await loadDeviceAssignment(); notify(editing ? "規則已更新，已重新判定目前套用頁面" : "規則已新增，已重新判定目前套用頁面"); } catch (error) { message(error); } };
   el("cancel-rule-edit").onclick = () => { state.editingRuleId = null; el("rule-form").reset(); el("rule-form-title").textContent = "新增規則"; el("save-rule").textContent = "新增規則"; el("cancel-rule-edit").hidden = true; syncRuleDeviceOptions(); updateRuleConflictHelp(); };
-  el("asset-form").onsubmit = async (event) => { event.preventDefault(); try { const data = new FormData(); data.append("file", el("asset-file").files[0]); await api("/api/workspace/assets", { method: "POST", body: data }); event.target.reset(); await loadAssets(); notify("圖片已上傳"); } catch (error) { message(error); } };
+  el("asset-form").onsubmit = async (event) => { event.preventDefault(); try { const file = el("asset-file").files[0]; if (!file) throw new Error("請先選擇圖片檔案"); const data = new FormData(); data.append("file", file); const result = await api("/api/workspace/assets", { method: "POST", body: data }); event.target.reset(); await loadAssets(); notify(result.deduplicated ? "相同圖片已在圖庫中，直接沿用既有素材" : "圖片已上傳、最佳化並加入圖庫"); } catch (error) { message(error); } };
   el("attendance-form").onsubmit = async (event) => { event.preventDefault(); try { await api("/api/workspace/attendance/today", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clock_in: el("clock-in").value || null, clock_out: el("clock-out").value || null, on_leave: el("on-leave").checked, leave_note: el("leave-note").value }) }); await loadAttendance(); await loadDeviceAssignment(); notify("出勤資料已儲存，已重新判定目前 Pi 頁面"); } catch (error) { message(error); } };
   el("refresh-data").onclick = async () => { try { await refresh(); notify("資料已重新整理"); } catch (error) { message(error); } };
   el("logout").onclick = async () => { try { await api("/auth/logout", { method: "POST" }); location.reload(); } catch (error) { message(error); } };

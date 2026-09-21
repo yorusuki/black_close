@@ -157,6 +157,73 @@ def waveshare_7in5_dashboard_layout() -> dict:
     return deepcopy(_WAVESHARE_7IN5_DASHBOARD_LAYOUT)
 
 
+_WAVESHARE_7IN5_LUNCH_LAYOUT = {
+    "elements": [
+        {"instance_id": "clock-bar-lunch", "module_id": "clock_bar", "x": 0, "y": 0, "w": 800, "h": 48, "z": 10, "refresh_interval": 60, "refresh_policy": "partial", "config": {"time_format": "%H:%M"}},
+        {"instance_id": "lunch-mascot", "module_id": "mascot", "x": 24, "y": 72, "w": 432, "h": 280, "z": 1, "refresh_interval": 30, "refresh_policy": "partial", "config": {"interval_seconds": 30, "art_scale": 140, "line_scale": 120, "frames": [
+            {"art": " /\\_/\\\n( =^.^= )\n /|___|\\", "line": "吃飯皇帝大，訊息等朕吃飽再說。"},
+            {"art": " /\\_/\\\n( o.o )\n /|___|\\", "line": "午休中：筷子優先於所有待辦。"},
+            {"art": " /\\_/\\\n( -.- ) z\n > ^ <", "line": "飯後發呆是正常的系統維護。"},
+            {"art": " /\\_/\\\n( ^.^ )\n > ^ <", "line": "今天的 KPI：把午餐好好吃完。"},
+        ]}},
+        {"instance_id": "lunch-countdown", "module_id": "countdown", "x": 480, "y": 72, "w": 296, "h": 126, "z": 1, "refresh_interval": 60, "refresh_policy": "partial", "config": {"title": "午休倒數", "events": [{"label": "距離回到座位", "kind": "daily_time", "time": "13:10"}], "show_seconds": False, "value_scale": 135}},
+        {"instance_id": "lunch-todos", "module_id": "todo_list", "x": 480, "y": 218, "w": 296, "h": 154, "z": 1, "refresh_interval": 60, "refresh_policy": "partial", "config": {"title": "下午回來再看", "show_completed": True, "items": [{"text": "喝水後再出發", "done": False}, {"text": "先處理最重要的一件", "done": False}, {"text": "留五分鐘整理思緒", "done": False}]}},
+        {"instance_id": "lunch-ticker", "module_id": "ticker", "x": 24, "y": 424, "w": 752, "h": 32, "z": 2, "refresh_interval": 30, "refresh_policy": "partial", "config": {"messages": ["午休不是偷懶，是下午還能正常運作的必要維護。", "慢慢吃，工作不會因為你吃快一點就變少。"], "message_interval_seconds": 300, "scroll_step_seconds": 30, "pixels_per_step": 12}},
+    ],
+}
+
+
+_WAVESHARE_7IN5_FOCUS_LAYOUT = {
+    "elements": [
+        {"instance_id": "clock-bar-focus", "module_id": "clock_bar", "x": 0, "y": 0, "w": 800, "h": 48, "z": 10, "refresh_interval": 60, "refresh_policy": "partial", "config": {"time_format": "%H:%M"}},
+        {"instance_id": "focus-todos", "module_id": "todo_list", "x": 24, "y": 72, "w": 432, "h": 328, "z": 1, "refresh_interval": 60, "refresh_policy": "partial", "config": {"title": "今天只做好這些", "title_scale": 130, "item_scale": 120, "show_completed": True, "items": [{"text": "完成最重要的一件事", "done": False}, {"text": "回覆必要訊息", "done": False}, {"text": "喝水、起身、呼吸", "done": False}, {"text": "把下一步留給明天的自己", "done": False}]}},
+        {"instance_id": "focus-countdown", "module_id": "countdown", "x": 480, "y": 72, "w": 296, "h": 128, "z": 1, "refresh_interval": 60, "refresh_policy": "partial", "config": {"title": "離下班還有", "events": [{"label": "18:30 準時收工", "kind": "daily_time", "time": "18:30"}], "show_seconds": False, "value_scale": 140}},
+        {"instance_id": "focus-attendance", "module_id": "monthly_attendance", "x": 480, "y": 220, "w": 296, "h": 180, "z": 1, "refresh_interval": 300, "refresh_policy": "partial", "config": {"title": "本月生存紀錄", "month_offset": 0, "show_weekends": True, "show_summary": True}},
+        {"instance_id": "focus-ticker", "module_id": "ticker", "x": 24, "y": 424, "w": 752, "h": 32, "z": 2, "refresh_interval": 30, "refresh_policy": "partial", "config": {"messages": ["一次只做一件事，剩下的事情請先排隊。", "專注不是把所有事做完，是先決定哪件事不用現在做。"], "message_interval_seconds": 300, "scroll_step_seconds": 30, "pixels_per_step": 12}},
+    ],
+}
+
+
+_WAVESHARE_7IN5_OFF_WORK_LAYOUT = {
+    "elements": [{"instance_id": "off-work-notice", "module_id": "status_notice", "x": 0, "y": 0, "w": 800, "h": 480, "z": 1, "refresh_interval": 180, "refresh_policy": "partial", "config": {"title": "今天辛苦了", "messages": ["今天的待辦，明天的我會處理。", "工作模式已收好，回家模式正在載入。", "通知先靜音，晚餐和休息優先。", "今天已盡力，剩下的留給明天。", "下班不是逃跑，是正常結束營業。"], "interval_seconds": 180}}],
+}
+
+
+_WAVESHARE_7IN5_WEEKEND_LAYOUT = {
+    "elements": [{"instance_id": "weekend-notice", "module_id": "status_notice", "x": 0, "y": 0, "w": 800, "h": 480, "z": 1, "refresh_interval": 3600, "refresh_policy": "partial", "config": {"title": "今日休假 ZZ", "messages": ["週末已簽收，待辦延後處理。", "今天休假，KPI 暫停營業。", "週休模式啟動：不接收工作訊號。", "假日合法放空中，請勿打擾。"], "interval_seconds": 0}}],
+}
+
+
+_WAVESHARE_7IN5_HOLIDAY_LAYOUT = {
+    "elements": [{"instance_id": "holiday-notice", "module_id": "status_notice", "x": 0, "y": 0, "w": 800, "h": 480, "z": 1, "refresh_interval": 3600, "refresh_policy": "partial", "config": {"title": "今日國定休假", "messages": ["今天不營業，請把時間還給自己。", "假日模式啟動：工作訊息明天再說。", "休息也是行程的一部分。"], "interval_seconds": 0}}],
+}
+
+
+def waveshare_7in5_lunch_layout() -> dict:
+    """回傳 7.5 吋午休資訊頁：午休倒數、AA、下午待辦與低頻跑馬燈。"""
+    return deepcopy(_WAVESHARE_7IN5_LUNCH_LAYOUT)
+
+
+def waveshare_7in5_focus_layout() -> dict:
+    """回傳未綁定規則的 7.5 吋專注清單頁，供管理台日後手動安排。"""
+    return deepcopy(_WAVESHARE_7IN5_FOCUS_LAYOUT)
+
+
+def waveshare_7in5_off_work_layout() -> dict:
+    """回傳 7.5 吋下班後低頻輪播頁。"""
+    return deepcopy(_WAVESHARE_7IN5_OFF_WORK_LAYOUT)
+
+
+def waveshare_7in5_weekend_layout() -> dict:
+    """回傳 7.5 吋週末靜態休假頁。"""
+    return deepcopy(_WAVESHARE_7IN5_WEEKEND_LAYOUT)
+
+
+def waveshare_7in5_holiday_layout() -> dict:
+    """回傳 7.5 吋國定假日靜態頁。"""
+    return deepcopy(_WAVESHARE_7IN5_HOLIDAY_LAYOUT)
+
+
 _WAVESHARE_LEAVE_LAYOUT = {
     "elements": [{
         "instance_id": "leave-notice", "module_id": "status_notice",

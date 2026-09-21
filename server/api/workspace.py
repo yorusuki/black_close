@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from io import BytesIO
-import mimetypes
 
 from flask import Blueprint, jsonify, request, send_file, session
 
@@ -198,9 +197,18 @@ def upload_asset():
     if not upload:
         return jsonify({"error": "missing_file"}), 400
     try:
-        record = assets.save_asset(upload.filename or "upload.bin", upload.read())
-        mime_type = mimetypes.guess_type(record["filename"])[0] or "application/octet-stream"
-        return jsonify(workspace_store.add_asset(_user_id(), record, mime_type)), 201
+        record = assets.prepare_asset(upload.filename or "upload.bin", upload.read())
+        existing = workspace_store.get_asset_by_digest(_user_id(), record["hash"])
+        if existing:
+            # 實體檔名由 digest 決定，已被安全保存；同一個人再次上傳相同圖不新增
+            # 圖庫卡片，也避免要使用者猜哪個素材 ID 才是有效的。
+            return jsonify({**existing, "deduplicated": True}), 200
+        mime_type = record["mime_type"]
+        saved = workspace_store.add_asset(_user_id(), record, mime_type)
+        if saved["deduplicated"]:
+            return jsonify(saved), 200
+        assets.register_asset(record)
+        return jsonify(saved), 201
     except ValueError as exc:
         return jsonify({"error": "invalid_asset", "message": str(exc)}), 400
 
