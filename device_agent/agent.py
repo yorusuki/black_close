@@ -8,6 +8,7 @@ import os
 import tempfile
 import time
 from pathlib import Path
+from urllib.parse import quote
 
 import requests
 from PIL import Image, UnidentifiedImageError
@@ -19,6 +20,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 log = logging.getLogger("device_agent.agent")
 LAYOUT_CACHE_PATH = agent_config.BASE_DIR / "data" / "runtime" / "last_device_layout.json"
 MAX_ASSET_DOWNLOAD_BYTES = 30 * 1024 * 1024
+MAX_ANIMATION_DOWNLOAD_BYTES = 30 * 1024 * 1024
+MAX_ANIMATION_FRAMES = 24
 
 
 def _headers(token: str) -> dict[str, str]:
@@ -108,7 +111,7 @@ def _safe_asset_filename(value: object) -> str | None:
     """只允許 Server 下發的一個檔名，禁止 layout 資料跨出 Pi 快取資料夾。"""
     if not isinstance(value, str) or not value or len(value) > 180:
         return None
-    return value if Path(value).name == value else None
+    return value if Path(value).name == value and value not in {".", ".."} else None
 
 
 def _valid_asset_file(path: Path) -> bool:
@@ -122,12 +125,12 @@ def _valid_asset_file(path: Path) -> bool:
         return False
 
 
-def _download_asset(server_url: str, headers: dict, asset_id: str, destination) -> bool:
+def _download_asset_path(server_url: str, headers: dict, path: str, destination: Path, *, byte_limit: int, label: str) -> bool:
     """串流下載、大小限制、完整驗證後才原子替換舊圖片。"""
     temporary_name: str | None = None
     try:
         response = requests.get(
-            f"{server_url}/api/v1/device/assets/{asset_id}", headers=headers, timeout=30, stream=True
+            f"{server_url}/api/v1/device/{path}", headers=headers, timeout=30, stream=True
         )
         response.raise_for_status()
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -138,8 +141,8 @@ def _download_asset(server_url: str, headers: dict, asset_id: str, destination) 
                 if not chunk:
                     continue
                 total += len(chunk)
-                if total > MAX_ASSET_DOWNLOAD_BYTES:
-                    raise ValueError("素材下載超過 30MB 限制")
+                if total > byte_limit:
+                    raise ValueError("素材下載超過允許大小")
                 temporary.write(chunk)
             temporary.flush()
             os.fsync(temporary.fileno())
@@ -151,13 +154,57 @@ def _download_asset(server_url: str, headers: dict, asset_id: str, destination) 
         log.info("素材已同步且驗證完成：%s", destination.name)
         return True
     except (requests.RequestException, OSError, ValueError):
-        log.exception("素材同步失敗，保留舊圖片並於下一輪重試：%s", asset_id)
+        log.exception("素材同步失敗，保留舊圖片並於下一輪重試：%s", label)
         return False
     finally:
         if temporary_name:
             Path(temporary_name).unlink(missing_ok=True)
         if "response" in locals():
             getattr(response, "close", lambda: None)()
+
+
+def _download_asset(server_url: str, headers: dict, asset_id: str, destination: Path) -> bool:
+    """相容既有靜態素材下載入口。"""
+    if not isinstance(asset_id, str) or not asset_id:
+        return False
+    return _download_asset_path(
+        server_url, headers, f"assets/{quote(asset_id, safe='')}", destination,
+        byte_limit=MAX_ASSET_DOWNLOAD_BYTES, label=asset_id,
+    )
+
+
+def _animation_frames(data: object) -> list[dict] | None:
+    """驗證 Server 下發的動畫資料；None 代表不是動畫，空 list 代表格式不安全。"""
+    if not isinstance(data, dict) or "animation" not in data:
+        return None
+    animation = data.get("animation")
+    if not isinstance(animation, dict) or animation.get("animated") is not True:
+        return []
+    frames = animation.get("frames")
+    if not isinstance(frames, list) or not 2 <= len(frames) <= MAX_ANIMATION_FRAMES:
+        return []
+    clean: list[dict] = []
+    for frame in frames:
+        if not isinstance(frame, dict):
+            return []
+        filename, duration = _safe_asset_filename(frame.get("filename")), frame.get("duration_ms")
+        if not filename or not isinstance(duration, int) or not 20 <= duration <= 10_000:
+            return []
+        clean.append({"filename": filename, "duration_ms": duration})
+    return clean
+
+
+def _ensure_asset(server_url: str, headers: dict, asset_id: str, destination: Path, *, byte_limit: int, path: str | None = None) -> bool:
+    if destination.is_file():
+        try:
+            if _valid_asset_file(destination):
+                return True
+            log.warning("本機素材驗證失敗，會重新下載：%s", destination.name)
+        except OSError:
+            pass
+    if path is None:
+        return _download_asset(server_url, headers, asset_id, destination)
+    return _download_asset_path(server_url, headers, path, destination, byte_limit=byte_limit, label=asset_id)
 
 
 def sync_assets(server_url: str, headers: dict, resolved: dict) -> bool:
@@ -182,14 +229,41 @@ def sync_assets(server_url: str, headers: dict, resolved: dict) -> bool:
             ready = False
             continue
         destination = assets_dir / filename
-        if destination.is_file():
-            try:
-                if _valid_asset_file(destination):
-                    continue
-                log.warning("本機素材驗證失敗，會重新下載：%s", filename)
-            except OSError:
-                pass
-        if not _download_asset(server_url, headers, asset_id, destination):
+        if not _ensure_asset(server_url, headers, asset_id, destination, byte_limit=MAX_ASSET_DOWNLOAD_BYTES):
+            ready = False
+            continue
+
+        frames = _animation_frames(data)
+        if frames == []:
+            log.warning("新版面含有不安全的動畫資料，暫不套用：%s", asset_id)
+            ready = False
+            continue
+        if frames is None:
+            continue
+        total = 0
+        animation_ready = True
+        for index, frame in enumerate(frames):
+            frame_path = assets_dir / frame["filename"]
+            if frame_path.is_file() and _valid_asset_file(frame_path):
+                total += frame_path.stat().st_size
+                if total > MAX_ANIMATION_DOWNLOAD_BYTES:
+                    animation_ready = False
+                    break
+                continue
+            remaining = MAX_ANIMATION_DOWNLOAD_BYTES - total
+            if remaining <= 0 or not _ensure_asset(
+                server_url,
+                headers,
+                asset_id,
+                frame_path,
+                byte_limit=remaining,
+                path=f"assets/{quote(asset_id, safe='')}/frames/{index}",
+            ):
+                animation_ready = False
+                break
+            total += frame_path.stat().st_size
+        if not animation_ready:
+            log.warning("動畫影格尚未完整同步，保留目前已套用版面：%s", asset_id)
             ready = False
     return ready
 
