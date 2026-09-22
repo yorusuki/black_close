@@ -7,8 +7,9 @@
     額外一套排程資料結構。
   - 裝置若不支援局部刷新：套用「最短整幅刷新間隔」節流，避免像動畫這種高頻變動
     去頻繁觸發整幅刷新（電子紙整幅刷新較傷面板、也比較慢）。
-  - 裝置若支援局部刷新：一般變動局刷；首次輸出、版面切換與模組明確指定時整幅刷新，
-    並在可設定的間隔或每日指定時間（微雪預設每天 12:00）全刷，避免殘影累積。
+  - 裝置若支援局部刷新：一般變動局刷；首次輸出、頁面內結構變更與模組明確指定時整幅
+    刷新。不同頁面切換可由 profile 選擇是否整刷，並在可設定的間隔或每日指定時間（微
+    雪預設每天 12:00）全刷，避免殘影累積。
 
 這個模組拆成兩段（對應 docs/IMPLEMENTATION_NOTES.md「拆分模式改成樹莓派本機渲染」）：
 
@@ -49,6 +50,7 @@ _last_partial_refresh: dict[str, float] = {}
 _last_scheduled_full_day: dict[str, datetime.date] = {}
 _partial_count_since_full: dict[str, int] = {}
 _last_layout_signature: dict[str, str] = {}
+_last_layout_id: dict[str, object] = {}
 
 
 def reset_device_render_state(device_id: str) -> None:
@@ -58,6 +60,7 @@ def reset_device_render_state(device_id: str) -> None:
     _last_scheduled_full_day.pop(device_id, None)
     _partial_count_since_full.pop(device_id, None)
     _last_layout_signature.pop(device_id, None)
+    _last_layout_id.pop(device_id, None)
 
 
 def _error_placeholder(size, message: str) -> Image.Image:
@@ -172,9 +175,16 @@ def _decide_refresh_mode(
                 return "full", canvas_box
         return "none", []
 
-    # 第一次輸出、切換場景／layout、或有模組明確要求時，一律整幅刷新。這可避免
-    # 移除元件後舊像素殘留，也讓「下班／週末」切到靜態頁面時畫面狀態確定一致。
-    if layout_changed or "full" in dirty_policies:
+    # 第一次輸出與模組明確要求始終整幅刷新。切換「不同頁面」則可由 Server profile
+    # 選擇是否整刷；關閉時會在同一張全畫面 dirty box 使用局刷波形，仍可清掉被移除
+    # 元件的舊像素，讓使用者測試面板殘影。頁面內的結構修改維持保守全刷。
+    if layout_changed and not profile.get("_page_switch", False):
+        force_layout_full = True
+    else:
+        force_layout_full = bool(profile.get("_initial_render", False)) or (
+            layout_changed and bool(profile.get("full_refresh_on_page_change", False))
+        )
+    if force_layout_full or "full" in dirty_policies:
         _partial_count_since_full[device_id] = 0
         _last_full_refresh[device_id] = now.timestamp()
         return "full", dirty_boxes
@@ -245,7 +255,10 @@ def render_from_elements(resolved: dict, now: datetime.datetime | None = None):
     dirty_boxes = []
     dirty_policies: set[str] = set()
     signature = _layout_signature(resolved)
-    layout_changed = _last_layout_signature.get(device_id) != signature
+    previous_signature = _last_layout_signature.get(device_id)
+    layout_changed = previous_signature != signature
+    initial_render = previous_signature is None
+    page_switch = not initial_render and _last_layout_id.get(device_id) != resolved.get("layout_id")
 
     elements = sorted(resolved.get("elements", []), key=lambda e: e.get("z", 0) or 0)
     next_element_states: dict[tuple, tuple] = {}
@@ -283,12 +296,18 @@ def render_from_elements(resolved: dict, now: datetime.datetime | None = None):
         dirty_boxes = [[0, 0, int(profile["resolution"][0]), int(profile["resolution"][1])]]
 
     final = device_profiles.quantize(canvas, profile)
+    # _decide_refresh_mode 只需要這兩個短暫 context flags；不要把它們寫回下發 profile，
+    # 也不要改變 Server 的每日／間隔全刷設定。
+    decision_profile = {**profile, "_initial_render": initial_render, "_page_switch": page_switch}
     refresh_mode, out_boxes = _decide_refresh_mode(
-        device_id, profile, dirty_boxes, dirty_policies, now, layout_changed=layout_changed,
+        device_id, decision_profile, dirty_boxes, dirty_policies, now, layout_changed=layout_changed,
     )
     if refresh_mode != "none":
         _last_element_state.update(next_element_states)
-    _last_layout_signature[device_id] = signature
+        # 若頁面切換被局刷冷卻時間節流，保留舊 signature；下一個 tick 會繼續帶著
+        # 全畫面 dirty box，直到實際輸出，避免移除的元件殘留。
+        _last_layout_signature[device_id] = signature
+        _last_layout_id[device_id] = resolved.get("layout_id")
 
     meta = {
         "device_id": device_id,
@@ -298,6 +317,8 @@ def render_from_elements(resolved: dict, now: datetime.datetime | None = None):
         "dirty_boxes": out_boxes,
         "partial_count_since_full": _partial_count_since_full.get(device_id, 0),
         "partial_refresh_min_interval_seconds": profile.get("partial_refresh_min_interval_seconds"),
+        "page_switch": page_switch,
+        "full_refresh_on_page_change": profile.get("full_refresh_on_page_change", False) is True,
         "rendered_at": now.isoformat(timespec="seconds"),
     }
     return final, meta

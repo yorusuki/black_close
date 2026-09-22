@@ -46,9 +46,9 @@ _DEFAULT_DEVICE_PROFILES = {
     "inky_phat": {"driver": "inky_phat", "resolution": [212, 104], "color_mode": "3color", "partial_refresh": False, "panel_partial_refresh_seconds": None, "partial_refresh_min_interval_seconds": None, "partial_refresh_tick_seconds": None},
     # Waveshare 標示的實驗值為 4.26 吋 0.7 秒、7.5 吋 V2 0.4 秒；實際
     # 面板輸出一律留三倍緩衝，避免時鐘誤差、SPI 傳輸和溫度差異讓局刷重疊。
-    "waveshare_4in26": {"driver": "waveshare_4in26", "resolution": [800, 480], "color_mode": "1bit", "partial_refresh": True, "panel_partial_refresh_seconds": 0.7, "partial_refresh_min_interval_seconds": 2.1, "partial_refresh_tick_seconds": 0.5, "full_refresh_interval_seconds": 86_400, "server_full_refresh_daily_at": "12:00", "full_refresh_daily_at": "12:00", "display_quiet_hours": _DEFAULT_QUIET_HOURS},
-    "waveshare_7in5_v2": {"driver": "waveshare_7in5_v2", "resolution": [800, 480], "color_mode": "1bit", "partial_refresh": True, "panel_partial_refresh_seconds": 0.4, "partial_refresh_min_interval_seconds": 1.2, "partial_refresh_tick_seconds": 0.2, "full_refresh_interval_seconds": 86_400, "server_full_refresh_daily_at": "12:00", "full_refresh_daily_at": "12:00", "display_quiet_hours": _DEFAULT_QUIET_HOURS},
-    "mock": {"driver": "mock", "resolution": [800, 480], "color_mode": "1bit", "partial_refresh": True, "panel_partial_refresh_seconds": None, "partial_refresh_min_interval_seconds": None, "partial_refresh_tick_seconds": None, "full_refresh_interval_seconds": 86_400, "server_full_refresh_daily_at": "12:00", "full_refresh_daily_at": "12:00", "display_quiet_hours": _DEFAULT_QUIET_HOURS},
+    "waveshare_4in26": {"driver": "waveshare_4in26", "resolution": [800, 480], "color_mode": "1bit", "partial_refresh": True, "panel_partial_refresh_seconds": 0.7, "partial_refresh_min_interval_seconds": 2.1, "partial_refresh_tick_seconds": 0.5, "full_refresh_on_page_change": False, "full_refresh_interval_seconds": 86_400, "server_full_refresh_daily_at": "12:00", "full_refresh_daily_at": "12:00", "display_quiet_hours": _DEFAULT_QUIET_HOURS},
+    "waveshare_7in5_v2": {"driver": "waveshare_7in5_v2", "resolution": [800, 480], "color_mode": "1bit", "partial_refresh": True, "panel_partial_refresh_seconds": 0.4, "partial_refresh_min_interval_seconds": 1.2, "partial_refresh_tick_seconds": 0.2, "full_refresh_on_page_change": False, "full_refresh_interval_seconds": 86_400, "server_full_refresh_daily_at": "12:00", "full_refresh_daily_at": "12:00", "display_quiet_hours": _DEFAULT_QUIET_HOURS},
+    "mock": {"driver": "mock", "resolution": [800, 480], "color_mode": "1bit", "partial_refresh": True, "panel_partial_refresh_seconds": None, "partial_refresh_min_interval_seconds": None, "partial_refresh_tick_seconds": None, "full_refresh_on_page_change": False, "full_refresh_interval_seconds": 86_400, "server_full_refresh_daily_at": "12:00", "full_refresh_daily_at": "12:00", "display_quiet_hours": _DEFAULT_QUIET_HOURS},
 }
 
 
@@ -817,13 +817,13 @@ def set_device_hidden(user_id: str, device_id: str, hidden: bool) -> bool:
 
 
 def update_device_refresh(user_id: str, device_id: str, refresh: Any) -> dict | None:
-    """更新可局刷面板的全刷策略；設定存在 Server 的 profile_json，Pi 只接收結果。"""
+    """更新可局刷面板的全刷策略與切頁策略；設定存在 Server profile_json。"""
     device = get_device(user_id, device_id)
     if not device:
         return None
     if not device["profile"].get("partial_refresh"):
         raise ValueError("此面板不支援局部刷新，無法設定局刷／全刷週期")
-    if not isinstance(refresh, dict) or set(refresh) - {"mode", "interval_seconds", "daily_at", "quiet_hours"}:
+    if not isinstance(refresh, dict) or set(refresh) - {"mode", "interval_seconds", "daily_at", "quiet_hours", "full_refresh_on_page_change"}:
         raise ValueError("刷新設定格式不正確")
 
     mode = refresh.get("mode")
@@ -854,6 +854,16 @@ def update_device_refresh(user_id: str, device_id: str, refresh: Any) -> dict | 
         profile["full_refresh_daily_at"] = daily_at
     else:
         raise ValueError("刷新模式必須是 interval 或 daily")
+
+    if "full_refresh_on_page_change" in refresh:
+        enabled = refresh["full_refresh_on_page_change"]
+        if not isinstance(enabled, bool):
+            raise ValueError("切換頁面全刷開關必須為 true 或 false")
+        profile["full_refresh_on_page_change"] = enabled
+    else:
+        # 舊 profile 沒有這個欄位時一律採新預設：切換頁面以全畫面局刷測試，
+        # 每日／間隔的保護性全刷完全不受影響。
+        profile.setdefault("full_refresh_on_page_change", False)
 
     if "quiet_hours" in refresh:
         quiet_hours = refresh["quiet_hours"]
