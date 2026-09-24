@@ -5,7 +5,7 @@ from io import BytesIO
 
 from flask import Blueprint, jsonify, request, send_file, session
 
-from .. import assets, auth, config, workspace_store
+from .. import assets, auth, config, holiday_calendar, workspace_store
 from ..render.compositor import render_from_elements
 
 bp = Blueprint("workspace", __name__, url_prefix="/api/workspace")
@@ -38,7 +38,11 @@ def list_devices():
 def create_device():
     try:
         data = request.get_json(force=False)
-        return jsonify(workspace_store.create_device(_user_id(), data.get("name"), data.get("model_id"))), 201
+        device = workspace_store.create_device(_user_id(), data.get("name"), data.get("model_id"))
+        # 新設備由管理台建立時，立即補上同型號週末頁的休假規則；資料層仍保持
+        # create_device 純粹，方便既有匯入與測試明確控制預設建置時機。
+        workspace_store.ensure_default_holiday_rules(device["id"])
+        return jsonify(device), 201
     except (AttributeError, ValueError) as exc:
         return jsonify({"error": "invalid_device", "message": str(exc)}), 400
 
@@ -187,6 +191,49 @@ def save_attendance():
         return jsonify(workspace_store.save_attendance(_user_id(), config.now_local().date(), request.get_json(force=False)))
     except ValueError as exc:
         return jsonify({"error": "invalid_attendance", "message": str(exc)}), 400
+
+
+@bp.get("/holidays")
+@auth.require_user
+def list_holidays():
+    return jsonify({
+        "dates": holiday_calendar.list_holidays(_user_id()),
+        "official_source": holiday_calendar.OFFICIAL_SOURCE_LABEL,
+    })
+
+
+@bp.post("/holidays/import")
+@auth.require_user
+def import_holidays():
+    data = request.get_json(force=False) or {}
+    try:
+        if not isinstance(data, dict) or set(data) != {"year"}:
+            raise holiday_calendar.HolidayCalendarError("請只提供要匯入的年份")
+        return jsonify(holiday_calendar.import_official_holidays(_user_id(), data.get("year")))
+    except holiday_calendar.HolidayCalendarError as exc:
+        return jsonify({"error": "holiday_import_failed", "message": str(exc)}), 400
+
+
+@bp.post("/holidays/manual")
+@auth.require_user
+def add_manual_holiday():
+    data = request.get_json(force=False) or {}
+    try:
+        if not isinstance(data, dict) or set(data) - {"date", "name"} or "date" not in data:
+            raise holiday_calendar.HolidayCalendarError("請提供日期與選填名稱")
+        return jsonify(holiday_calendar.add_manual_holiday(_user_id(), data.get("date"), data.get("name"))), 201
+    except holiday_calendar.HolidayCalendarError as exc:
+        return jsonify({"error": "invalid_holiday", "message": str(exc)}), 400
+
+
+@bp.delete("/holidays/manual/<date_value>")
+@auth.require_user
+def delete_manual_holiday(date_value):
+    try:
+        deleted = holiday_calendar.delete_manual_holiday(_user_id(), date_value)
+    except holiday_calendar.HolidayCalendarError as exc:
+        return jsonify({"error": "invalid_holiday", "message": str(exc)}), 400
+    return ("", 204) if deleted else (jsonify({"error": "not_found"}), 404)
 
 
 @bp.get("/assets")

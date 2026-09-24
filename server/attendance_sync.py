@@ -20,7 +20,7 @@ import sys
 import time
 from typing import Any, Callable
 
-from . import attendance, config, store, workspace_store
+from . import attendance, config, holiday_calendar, store, workspace_store
 
 log = logging.getLogger("server.attendance_sync")
 
@@ -39,13 +39,15 @@ class AttendanceSyncError(RuntimeError):
     """可安全寫入 log 的同步錯誤；訊息絕不能帶入外部網站原始資料。"""
 
 
-def is_workday(day: datetime.date) -> bool:
-    return day.weekday() < 5 and day.isoformat() not in set(store.get_holidays())
+def is_workday(day: datetime.date, user_id: str | None = None) -> bool:
+    """帳號工作日優先讀其自訂／官方行事曆；legacy 呼叫維持舊清單。"""
+    holiday = holiday_calendar.is_holiday(user_id, day) if user_id else day.isoformat() in set(store.get_holidays())
+    return day.weekday() < 5 and not holiday
 
 
-def polling_window(now: datetime.datetime, record: dict[str, Any]) -> str | None:
+def polling_window(now: datetime.datetime, record: dict[str, Any], user_id: str | None = None) -> str | None:
     """回傳此刻是否需要同步；已取得該時段打卡便立即停止請求。"""
-    if not is_workday(now.date()) or record.get("on_leave"):
+    if not is_workday(now.date(), user_id) or record.get("on_leave"):
         return None
     current_time = now.time()
     if MORNING_START <= current_time < MORNING_END and not record.get("clock_in"):
@@ -144,7 +146,7 @@ def sync_once(
         log.warning("出勤同步未執行：找不到唯一的工作區 owner")
         return False
     current = workspace_store.attendance_snapshot(owner["id"], now.date())
-    window = polling_window(now, current)
+    window = polling_window(now, current, owner["id"])
     if window is None:
         return False
     try:
@@ -177,7 +179,8 @@ def run_forever() -> None:
         now = config.now_local()
         # sync_once 內會再次確認唯一 owner、當日資料與時間窗口；若已打卡就不會
         # 發出 EIP 請求。仍維持 30 秒 idle，讓下一個窗口能即時開始。
-        if is_workday(now.date()) and (MORNING_START <= now.time() < MORNING_END or EVENING_START <= now.time() < EVENING_END):
+        owner = workspace_store.sync_owner()
+        if owner and is_workday(now.date(), owner["id"]) and (MORNING_START <= now.time() < MORNING_END or EVENING_START <= now.time() < EVENING_END):
             sync_once(now)
             elapsed = time.monotonic() - started
             time.sleep(max(1, POLL_INTERVAL_SECONDS - elapsed))

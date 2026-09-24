@@ -2,7 +2,7 @@
 <html lang="zh-Hant">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>epagerPi 管理台</title><link rel="stylesheet" href="style.css?v=ui-20260922-01">
+  <title>epagerPi 管理台</title><link rel="stylesheet" href="style.css?v=ui-20260922-02">
 </head>
 <body>
   <header class="topbar">
@@ -14,6 +14,7 @@
       <button class="tab" data-tab="rules" type="button">顯示規則</button>
       <button class="tab" data-tab="gallery" type="button">圖庫</button>
       <button class="tab" data-tab="content" type="button">出勤</button>
+      <button class="tab" data-tab="holidays" type="button">休假日</button>
     </nav>
     <div class="account"><span id="identity"></span><button id="refresh-data" class="button button-quiet" type="button">重新整理</button><button id="logout" class="button button-quiet" type="button">登出</button></div>
   </header>
@@ -52,10 +53,18 @@
       <div class="page-heading"><div><p class="eyebrow">ATTENDANCE</p><h1>今日出勤</h1><p>手動調整僅影響目前登入帳號的今日狀態。</p></div></div>
       <section class="surface"><div class="section-heading"><div><h2>上下班與請假</h2><p>儲存後會立即重新判定這個帳號各 Pi 的顯示規則。</p></div></div><form id="attendance-form" class="field-grid"><label>上班<input id="clock-in" type="time"></label><label>下班<input id="clock-out" type="time"></label><label class="checkbox-field"><input id="on-leave" type="checkbox"> 今日請假</label><label class="field-span"><span>請假說明</span><input id="leave-note" maxlength="80" placeholder="選填，最多 80 字"></label><button class="button button-primary">儲存出勤</button></form><p id="attendance-status" class="hint"></p></section>
     </section>
+    <section id="holidays" class="tab-panel" data-panel="holidays" hidden>
+      <div class="page-heading"><div><p class="eyebrow">HOLIDAYS</p><h1>休假日行事曆</h1><p>匯入政府公開辦公日曆，或新增自己的休假日。資料只會套用到目前登入帳號；判定為休假時，Pi 預設使用同型號的週末休假頁。</p></div></div>
+      <div class="two-column">
+        <section class="surface"><div class="section-heading"><div><h2>匯入國定／補休日</h2><p>Server 會從固定的政府公開資料來源讀取指定年度，僅匯入平日放假日；六日已由週末規則處理。</p></div></div><form id="holiday-import-form" class="inline-form"><label>年度<input id="holiday-import-year" type="number" min="2000" max="2100" step="1" required></label><button class="button button-primary">匯入官方行事曆</button></form><p id="holiday-import-status" class="hint"></p></section>
+        <section class="surface"><div class="section-heading"><div><h2>新增自訂休假</h2><p>適合特休、公司休假或補休。自訂日期優先於同日官方名稱。</p></div></div><form id="holiday-manual-form" class="inline-form"><label>日期<input id="holiday-manual-date" type="date" required></label><label class="field-grow">名稱<input id="holiday-manual-name" maxlength="80" placeholder="例如：特休、公司休假"></label><button class="button button-primary">新增休假日</button></form></section>
+      </div>
+      <section class="surface"><div class="section-heading"><div><h2>我的有效休假日</h2><p>自訂資料可刪除；官方資料可重新匯入該年度更新。既有清單僅為舊版相容資料。</p></div></div><div id="holiday-list" class="list-stack"></div></section>
+    </section>
   </main>
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
   <dialog id="token-dialog" class="token-dialog"><form method="dialog"><div class="dialog-heading"><h2>Pi device token</h2><button class="icon-button" aria-label="關閉" value="close">×</button></div><p>此 token 只顯示這一次。請複製到對應 Pi 的 <code>device_agent/config.yaml</code>，不要提交或分享。</p><code id="token-value" class="token-value"></code><div class="button-row"><button id="copy-token" class="button button-primary" type="button">複製 token</button><button class="button button-secondary" value="close">我已安全保存</button></div></form></dialog>
   <dialog id="refresh-dialog" class="token-dialog"><form method="dialog"><div class="dialog-heading"><h2>全刷／局刷設定</h2><button class="icon-button" aria-label="關閉" value="close">×</button></div><p id="refresh-device-name" class="hint"></p><p>每日／間隔全刷是獨立的面板保護週期，不受切頁測試開關影響。</p><label class="checkbox-field"><input id="refresh-full-on-page-change" type="checkbox"> 切換不同頁面時使用全刷</label><p class="hint">預設關閉：切換頁面會以全畫面局刷更新，適合測試殘影；首次啟動、頁面內結構變更與模組要求全刷時仍會全刷。</p><label>全刷模式<select id="refresh-mode"><option value="interval">每隔一段時間</option><option value="daily">每天指定時間</option></select></label><label id="refresh-interval-field">全刷間隔（小時）<input id="refresh-interval-hours" type="number" min="0.25" max="24" step="0.25"></label><label id="refresh-daily-field">每日全刷時間<input id="refresh-daily-at" type="time"></label><label class="checkbox-field"><input id="quiet-hours-enabled" type="checkbox"> 夜間靜默：停止實體面板刷新</label><div id="quiet-hours-fields" class="field-grid"><label>靜默開始<input id="quiet-hours-start" type="time"></label><label>靜默結束<input id="quiet-hours-end" type="time"></label><label class="checkbox-field"><input id="quiet-weekends" type="checkbox"> 週末持續靜默</label></div><p class="hint">靜默時段仍會同步版面與素材，但不會輸出到電子紙；結束後會先全刷一次。啟用週末靜默時，會維持最後畫面至週一早上。落在靜默內的全刷會延後。</p><div class="button-row"><button id="save-refresh" class="button button-primary" type="button">儲存刷新設定</button><button class="button button-secondary" value="close">取消</button></div></form></dialog>
-  <script src="editor.js?v=ui-20260922-01"></script>
+  <script src="editor.js?v=ui-20260922-02"></script>
 </body>
 </html>

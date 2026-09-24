@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from . import config, store
+from . import config, holiday_calendar, store
 
 MODEL_IDS = {"inky_phat", "waveshare_4in26", "waveshare_7in5_v2", "mock"}
 _MODEL_RESOLUTIONS = {
@@ -490,6 +490,63 @@ def ensure_default_weekend_pages() -> dict[str, int]:
             )
             result["rules"] += 1
         con.execute("INSERT INTO schema_metadata(key,value) VALUES(?,?)", (_WEEKEND_PAGE_UPGRADE_KEY, _json(result)))
+    return result
+
+
+def ensure_default_holiday_rules(device_id: str | None = None) -> dict[str, int]:
+    """為每台 Waveshare 補上「休假日使用同型號週末頁」的預設規則。
+
+    只在該設備沒有任何 ``holiday=true`` 規則時建立，完全不覆寫使用者既有的
+    國定假日／自訂休假頁。這個函式不使用一次性 migration key，讓之後新建的
+    裝置也會立即取得正確預設值。
+    """
+    from .default_layouts import waveshare_7in5_weekend_layout, waveshare_weekend_layout
+
+    definitions = {
+        "waveshare_4in26": ("週末休假頁", waveshare_weekend_layout),
+        "waveshare_7in5_v2": ("7.5 吋週末休假頁", waveshare_7in5_weekend_layout),
+    }
+    result = {"pages": 0, "rules": 0}
+    with _db() as con:
+        query = "SELECT id,user_id,model_id FROM devices WHERE model_id IN (?,?) AND hidden=0"
+        parameters: tuple[str, ...] = tuple(definitions)
+        if device_id is not None:
+            query += " AND id=?"
+            parameters += (device_id,)
+        devices = con.execute(query, parameters).fetchall()
+        page_ids: dict[tuple[str, str], str] = {}
+        for device in devices:
+            existing = con.execute(
+                "SELECT 1 FROM rules WHERE device_id=? AND holiday=1 LIMIT 1", (device["id"],)
+            ).fetchone()
+            if existing:
+                continue
+            key = (device["user_id"], device["model_id"])
+            page_id = page_ids.get(key)
+            if page_id is None:
+                page_name, factory = definitions[device["model_id"]]
+                template_id = f"model:{device['model_id']}"
+                row = con.execute(
+                    "SELECT id FROM pages WHERE user_id=? AND name=? AND template_id=? ORDER BY created_at LIMIT 1",
+                    (device["user_id"], page_name, template_id),
+                ).fetchone()
+                if row:
+                    page_id = row["id"]
+                else:
+                    page_id = str(uuid.uuid4())
+                    con.execute(
+                        "INSERT INTO pages(id,user_id,name,template_id,content_json) VALUES(?,?,?,?,?)",
+                        (page_id, device["user_id"], page_name, template_id, _json(factory())),
+                    )
+                    result["pages"] += 1
+                page_ids[key] = page_id
+            con.execute(
+                """INSERT INTO rules(id,user_id,device_id,page_id,name,priority,weekdays_json,holiday,enabled)
+                   VALUES(?,?,?,?,?,?,?,?,?)""",
+                (str(uuid.uuid4()), device["user_id"], device["id"], page_id,
+                 "國定／自訂休假（週休頁）", 350, _json([0, 1, 2, 3, 4]), 1, 1),
+            )
+            result["rules"] += 1
     return result
 
 
@@ -1371,7 +1428,7 @@ def _effective_attendance_status(user_id: str, now: dt.datetime, holiday: bool) 
 
 def _resolve_device_assignment(device: dict, now: dt.datetime) -> tuple[dict | None, dict | None, str, bool, bool, list[dict]]:
     """以 Pi 實際使用的規則邏輯選出此刻應顯示的頁面。"""
-    holiday = now.date().isoformat() in set(store.get_holidays())
+    holiday = holiday_calendar.is_holiday(device["user_id"], now.date())
     status, auto_off_work = _effective_attendance_status(device["user_id"], now, holiday)
     rules = [rule for rule in list_rules(device["user_id"]) if rule["device_id"] == device["id"]]
     # New edits reject same-priority overlaps. Older rules may still have one,

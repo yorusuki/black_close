@@ -57,6 +57,8 @@ def _target_page_name(source_page: dict, rule: dict) -> str:
     if rule.get("attendance_status") == "leave":
         return "7.5 吋請假頁"
     if rule.get("holiday") is True:
+        if rule.get("name") == "國定／自訂休假（週休頁）":
+            return "7.5 吋週末休假頁"
         return "7.5 吋國定假日頁"
     if set(rule.get("weekdays") or []) == {5, 6}:
         return "7.5 吋週末休假頁"
@@ -120,6 +122,10 @@ def provision_7in5(*, source_device_name: str = DEFAULT_SOURCE_DEVICE,
             continue
         workspace_store.create_rule(user_id, copied)
         rules_created.append(copied["name"])
+
+    # provision_7in5 可直接在容器內執行，不能假設網頁服務已替這台新設備建立
+    # 假日預設規則；已有來源假日規則副本時，此呼叫會保留它。
+    workspace_store.ensure_default_holiday_rules(target["id"])
 
     return {
         "device": {"id": target["id"], "name": target["name"], "model_id": target["model_id"]},
