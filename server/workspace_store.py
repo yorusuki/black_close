@@ -550,6 +550,56 @@ def ensure_default_holiday_rules(device_id: str | None = None) -> dict[str, int]
     return result
 
 
+def ensure_default_national_holiday_pages(device_id: str | None = None) -> dict[str, int]:
+    """替 Waveshare 建立可編輯的國定假日專頁並設為設備預設值。
+
+    profile 裡明確的 ``None`` 代表使用者選擇通用休假頁，不能在下次啟動時
+    再自動填回；既有非空值也保留，避免覆寫已選擇的專用頁。
+    """
+    from .default_layouts import waveshare_7in5_holiday_layout, waveshare_holiday_layout
+
+    definitions = {
+        "waveshare_4in26": ("國定假日頁", waveshare_holiday_layout),
+        "waveshare_7in5_v2": ("7.5 吋國定假日頁", waveshare_7in5_holiday_layout),
+    }
+    result = {"pages": 0, "devices": 0}
+    with _db() as con:
+        query = "SELECT id,user_id,model_id,profile_json FROM devices WHERE model_id IN (?,?)"
+        parameters: tuple[str, ...] = tuple(definitions)
+        if device_id is not None:
+            query += " AND id=?"
+            parameters += (device_id,)
+        devices = con.execute(query, parameters).fetchall()
+        pages_by_user_model: dict[tuple[str, str], str] = {}
+        for device in devices:
+            profile = _parse_json(device["profile_json"], {})
+            if not isinstance(profile, dict) or "national_holiday_page_id" in profile:
+                continue
+            key = (device["user_id"], device["model_id"])
+            page_id = pages_by_user_model.get(key)
+            if page_id is None:
+                page_name, factory = definitions[device["model_id"]]
+                row = con.execute(
+                    "SELECT id FROM pages WHERE user_id=? AND name=? AND template_id=? ORDER BY created_at LIMIT 1",
+                    (device["user_id"], page_name, f"model:{device['model_id']}"),
+                ).fetchone()
+                if row:
+                    page_id = row["id"]
+                else:
+                    page_id = str(uuid.uuid4())
+                    con.execute(
+                        "INSERT INTO pages(id,user_id,name,template_id,content_json) VALUES(?,?,?,?,?)",
+                        (page_id, device["user_id"], page_name,
+                         f"model:{device['model_id']}", _json(factory())),
+                    )
+                    result["pages"] += 1
+                pages_by_user_model[key] = page_id
+            profile["national_holiday_page_id"] = page_id
+            con.execute("UPDATE devices SET profile_json=? WHERE id=?", (_json(profile), device["id"]))
+            result["devices"] += 1
+    return result
+
+
 def ensure_default_leave_pages() -> dict[str, int]:
     """為既有 Waveshare 設備補建全天請假頁與規則。
 
@@ -851,6 +901,8 @@ def create_device(user_id: str, name: str, model_id: str, profile: dict | None =
     if profile is not None:
         if not isinstance(profile, dict):
             raise ValueError("設備 profile 必須是物件")
+        if "national_holiday_page_id" in profile:
+            raise ValueError("國定假日頁必須在設備建立後，由同帳號選擇相同型號頁面")
         changed_hardware = [field for field in _HARDWARE_PROFILE_FIELDS if field in profile and profile[field] != canonical_profile[field]]
         if changed_hardware:
             raise ValueError("硬體型號建立後不可替換 driver、解析度、色彩模式或局刷能力")
@@ -871,6 +923,27 @@ def create_device(user_id: str, name: str, model_id: str, profile: dict | None =
 def set_device_hidden(user_id: str, device_id: str, hidden: bool) -> bool:
     with _db() as con:
         return con.execute("UPDATE devices SET hidden=? WHERE id=? AND user_id=?", (int(hidden), device_id, user_id)).rowcount == 1
+
+
+def update_device_national_holiday_page(user_id: str, device_id: str, page_id: Any) -> dict | None:
+    """指定國定假日專頁；None 明確表示回退到一般休假規則。"""
+    if page_id is not None and (not isinstance(page_id, str) or not page_id):
+        raise ValueError("國定假日頁面 ID 格式不正確")
+    with _db() as con:
+        con.execute("BEGIN IMMEDIATE")
+        row = con.execute("SELECT * FROM devices WHERE id=? AND user_id=?", (device_id, user_id)).fetchone()
+        if not row:
+            return None
+        if page_id is not None:
+            page_row = con.execute("SELECT * FROM pages WHERE id=? AND user_id=?", (page_id, user_id)).fetchone()
+            if not page_row or not page_matches_device(_public_page(page_row), _public_device(row)):
+                raise ValueError("國定假日頁面不存在，或與此設備的面板型號不符")
+        profile = _parse_json(row["profile_json"], {})
+        if not isinstance(profile, dict):
+            profile = {}
+        profile["national_holiday_page_id"] = page_id
+        con.execute("UPDATE devices SET profile_json=? WHERE id=? AND user_id=?", (_json(profile), device_id, user_id))
+    return get_device(user_id, device_id)
 
 
 def update_device_refresh(user_id: str, device_id: str, refresh: Any) -> dict | None:
@@ -1089,6 +1162,9 @@ def page_preset(model_id: str, preset: str | None) -> dict:
     """只回傳白名單中的內建版面，絕不把前端 preset 當成可執行或可任意取檔的名稱。"""
     if preset in (None, "", "blank"):
         return {"elements": []}
+    if model_id == "waveshare_4in26" and preset == "426_holiday":
+        from .default_layouts import waveshare_holiday_layout
+        return waveshare_holiday_layout()
     if model_id == "waveshare_7in5_v2":
         from . import default_layouts
         presets = {
@@ -1367,7 +1443,8 @@ def attendance_month_snapshot(user_id: str, day: dt.date, month_offset: Any = 0)
     for row in rows:
         status = "leave" if row["on_leave"] else "off_work" if row["clock_in"] and row["clock_out"] else "working" if row["clock_in"] else "pending"
         records[str(int(str(row["day"])[-2:]))] = status
-    return {"year": year, "month": month, "records": records}
+    return {"year": year, "month": month, "records": records,
+            "holidays": holiday_calendar.holidays_in_month(user_id, year, month)}
 
 
 def save_attendance(user_id: str, day: dt.date, payload: Any) -> dict:
@@ -1426,9 +1503,11 @@ def _effective_attendance_status(user_id: str, now: dt.datetime, holiday: bool) 
     return ("off_work" if auto_off_work else status), auto_off_work
 
 
-def _resolve_device_assignment(device: dict, now: dt.datetime) -> tuple[dict | None, dict | None, str, bool, bool, list[dict]]:
+def _resolve_device_assignment(device: dict, now: dt.datetime) -> tuple[dict | None, dict | None, str, bool, str | None, bool, list[dict]]:
     """以 Pi 實際使用的規則邏輯選出此刻應顯示的頁面。"""
-    holiday = holiday_calendar.is_holiday(device["user_id"], now.date())
+    holiday_info = holiday_calendar.holiday_on(device["user_id"], now.date())
+    holiday = holiday_info is not None
+    holiday_kind = holiday_info["kind"] if holiday_info else None
     status, auto_off_work = _effective_attendance_status(device["user_id"], now, holiday)
     rules = [rule for rule in list_rules(device["user_id"]) if rule["device_id"] == device["id"]]
     # New edits reject same-priority overlaps. Older rules may still have one,
@@ -1439,7 +1518,14 @@ def _resolve_device_assignment(device: dict, now: dt.datetime) -> tuple[dict | N
     )
     chosen = matching[0] if matching else None
     page = get_page(device["user_id"], chosen["page_id"]) if chosen else None
-    return chosen, page, status, holiday, auto_off_work, matching
+    if holiday_kind == "national":
+        dedicated_id = device.get("profile", {}).get("national_holiday_page_id")
+        dedicated = get_page(device["user_id"], dedicated_id) if isinstance(dedicated_id, str) else None
+        if dedicated and page_matches_device(dedicated, device):
+            page = dedicated
+            chosen = {"id": f"national-holiday:{device['id']}", "name": "國定假日專用頁",
+                      "page_id": dedicated["id"], "priority": None}
+    return chosen, page, status, holiday, holiday_kind, auto_off_work, matching
 
 
 def device_assignment(user_id: str, device_id: str, now: dt.datetime | None = None) -> dict | None:
@@ -1448,12 +1534,14 @@ def device_assignment(user_id: str, device_id: str, now: dt.datetime | None = No
     if not device:
         return None
     now = now or config.now_local()
-    chosen, page, status, holiday, auto_off_work, matching = _resolve_device_assignment(device, now)
+    chosen, page, status, holiday, holiday_kind, auto_off_work, matching = _resolve_device_assignment(device, now)
     rules = [rule for rule in list_rules(user_id) if rule["device_id"] == device_id]
     matching_ids = {rule["id"] for rule in matching}
     alternatives = [rule for rule in matching if chosen and rule["id"] != chosen["id"] and rule["page_id"] != chosen["page_id"]]
     same_priority = [rule for rule in alternatives if chosen and rule["priority"] == chosen["priority"]]
-    if not chosen:
+    if chosen and chosen["id"].startswith("national-holiday:"):
+        selection_reason = "今天列為國定假日，因此使用這台設備指定的專用頁面；清空選擇後會依通用休假規則顯示。"
+    elif not chosen:
         selection_reason = "目前沒有規則同時符合日期、時段與出勤條件。"
     elif same_priority:
         selection_reason = (
@@ -1475,6 +1563,7 @@ def device_assignment(user_id: str, device_id: str, now: dt.datetime | None = No
         "attendance_status": status,
         "attendance_status_source": "auto_off_work" if auto_off_work else "record",
         "is_holiday": holiday,
+        "holiday_kind": holiday_kind,
         "active_rule": None if not chosen else {
             "id": chosen["id"], "name": chosen["name"], "priority": chosen["priority"], "page_id": chosen["page_id"],
         },
@@ -1552,7 +1641,7 @@ def _daily_refresh_marker(profile: dict, now: dt.datetime) -> str | None:
 def device_layout(device: dict, now: dt.datetime | None = None) -> dict:
     """為 token 所屬 Pi 建立版面，不透露他人裝置與素材。"""
     now = now or config.now_local()
-    chosen, page, _, _, _, _ = _resolve_device_assignment(device, now)
+    chosen, page, _, _, _, _, _ = _resolve_device_assignment(device, now)
     return _page_layout(device, page, now, scene=chosen["name"] if chosen else None)
 
 

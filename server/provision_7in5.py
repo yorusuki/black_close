@@ -98,7 +98,7 @@ def provision_7in5(*, source_device_name: str = DEFAULT_SOURCE_DEVICE,
     if target is None:
         inherited = {
             key: value for key, value in source["profile"].items()
-            if key not in workspace_store._HARDWARE_PROFILE_FIELDS
+            if key not in workspace_store._HARDWARE_PROFILE_FIELDS and key != "national_holiday_page_id"
         }
         target = workspace_store.create_device(user_id, target_device_name, TARGET_MODEL, inherited)
         token = target.pop("token")
@@ -126,6 +126,7 @@ def provision_7in5(*, source_device_name: str = DEFAULT_SOURCE_DEVICE,
     # provision_7in5 可直接在容器內執行，不能假設網頁服務已替這台新設備建立
     # 假日預設規則；已有來源假日規則副本時，此呼叫會保留它。
     workspace_store.ensure_default_holiday_rules(target["id"])
+    workspace_store.ensure_default_national_holiday_pages(target["id"])
 
     return {
         "device": {"id": target["id"], "name": target["name"], "model_id": target["model_id"]},

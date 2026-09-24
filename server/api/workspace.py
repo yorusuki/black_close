@@ -42,7 +42,9 @@ def create_device():
         # 新設備由管理台建立時，立即補上同型號週末頁的休假規則；資料層仍保持
         # create_device 純粹，方便既有匯入與測試明確控制預設建置時機。
         workspace_store.ensure_default_holiday_rules(device["id"])
-        return jsonify(device), 201
+        workspace_store.ensure_default_national_holiday_pages(device["id"])
+        # 回傳補建預設頁後的最新 profile，讓管理台與下一次 Pi 請求立即看到專用頁 ID。
+        return jsonify(workspace_store.get_device(_user_id(), device["id"])), 201
     except (AttributeError, ValueError) as exc:
         return jsonify({"error": "invalid_device", "message": str(exc)}), 400
 
@@ -61,7 +63,15 @@ def update_device(device_id):
         except ValueError as exc:
             return jsonify({"error": "invalid_refresh", "message": str(exc)}), 400
         return jsonify(device) if device else (jsonify({"error": "not_found"}), 404)
-    return jsonify({"error": "invalid_device", "message": "僅可更新 hidden 或 refresh"}), 400
+    if set(data) == {"national_holiday_page_id"}:
+        try:
+            device = workspace_store.update_device_national_holiday_page(
+                _user_id(), device_id, data["national_holiday_page_id"]
+            )
+        except ValueError as exc:
+            return jsonify({"error": "invalid_national_holiday_page", "message": str(exc)}), 400
+        return jsonify(device) if device else (jsonify({"error": "not_found"}), 404)
+    return jsonify({"error": "invalid_device", "message": "僅可更新 hidden、refresh 或國定假日專用頁"}), 400
 
 
 @bp.post("/devices/<device_id>/token")

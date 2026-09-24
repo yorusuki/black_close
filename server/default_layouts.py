@@ -140,6 +140,31 @@ def waveshare_weekend_layout() -> dict:
     return deepcopy(_WAVESHARE_WEEKEND_LAYOUT)
 
 
+_WAVESHARE_HOLIDAY_LAYOUT = {
+    "elements": [
+        {
+            "instance_id": "national-holiday-notice", "module_id": "status_notice",
+            "x": 0, "y": 0, "w": 800, "h": 480, "z": 1,
+            "refresh_interval": 3600, "refresh_policy": "partial",
+            "config": {
+                "title": "今天國定休假",
+                "messages": [
+                    "國定假日已簽收，工作訊息明天再說。",
+                    "今天依法休息，待辦請留給上班日。",
+                    "行事曆說休假，這次就聽行事曆的。",
+                ],
+                "interval_seconds": 0,
+            },
+        },
+    ],
+}
+
+
+def waveshare_holiday_layout() -> dict:
+    """回傳 4.26 吋國定假日靜態頁；與 7.5 吋頁面分別綁定型號。"""
+    return deepcopy(_WAVESHARE_HOLIDAY_LAYOUT)
+
+
 _WAVESHARE_7IN5_DASHBOARD_LAYOUT = {
     "elements": [
         {"instance_id": "clock-bar-top", "module_id": "clock_bar", "x": 0, "y": 0, "w": 800, "h": 48, "z": 10, "refresh_interval": 20, "refresh_policy": "partial", "config": {"time_format": "%H:%M"}},

@@ -52,6 +52,9 @@ class MonthlyAttendanceModule(BaseModule):
             records = {}
         if not isinstance(records, dict):
             records = {}
+        holidays = data.get("holidays", {}) if isinstance(data, dict) and data.get("year") == year and data.get("month") == month else {}
+        if not isinstance(holidays, dict):
+            holidays = {}
         title = str(cfg.get("title", "本月出勤")).strip() or "本月出勤"
         title_font = load_font(scaled_font_size(h * 0.12, cfg.get("font_scale", 100), minimum=8))
         draw.text((pad, pad), title, fill="black", font=title_font)
@@ -72,6 +75,7 @@ class MonthlyAttendanceModule(BaseModule):
             draw.text((pad + column * cell_w + (cell_w - label_w) / 2, grid_y), weekday, fill="black", font=label_font)
         grid_y += cell_h
         counts = {"off_work": 0, "working": 0, "leave": 0}
+        holiday_counts = {"national": 0, "manual": 0}
         for row, week in enumerate(weeks):
             for column, day in enumerate(week):
                 if not day:
@@ -79,6 +83,10 @@ class MonthlyAttendanceModule(BaseModule):
                 x, y = pad + column * cell_w, grid_y + row * cell_h
                 weekend = column >= 5
                 status = records.get(str(day), "pending")
+                holiday = holidays.get(str(day), {})
+                holiday_kind = holiday.get("kind") if isinstance(holiday, dict) else None
+                if holiday_kind in holiday_counts:
+                    holiday_counts[holiday_kind] += 1
                 if status in counts:
                     counts[status] += 1
                 if weekend and cfg.get("show_weekends", True):
@@ -94,8 +102,23 @@ class MonthlyAttendanceModule(BaseModule):
                     draw.ellipse((x + cell_w * .58, y + cell_h * .58, x + cell_w - 3, y + cell_h - 3), fill="black")
                 number = str(day)
                 draw.text((x + 2, y + 1), number, fill=number_color, font=day_font)
+                # 右上角以小標籤區分國定假日與自訂休假；不覆蓋出勤底色與日期數字。
+                if holiday_kind in ("national", "manual"):
+                    badge = "國" if holiday_kind == "national" else "休"
+                    badge_font = load_font(max(6, min(9, int(cell_h * 0.34))))
+                    badge_w = max(8, int(draw.textlength(badge, font=badge_font) + 3))
+                    badge_h = max(8, int(cell_h * 0.38))
+                    bx = x + cell_w - badge_w - 1
+                    by = y + 1
+                    if bx > x + 2 and by + badge_h < y + cell_h - 1:
+                        if holiday_kind == "national":
+                            draw.rectangle((bx, by, bx + badge_w, by + badge_h), fill="black")
+                            draw.text((bx + 1, by), badge, fill="white", font=badge_font)
+                        else:
+                            draw.rectangle((bx, by, bx + badge_w, by + badge_h), outline="black", width=1)
+                            draw.text((bx + 1, by), badge, fill="black", font=badge_font)
         if summary_h:
-            summary = f"完成 {counts['off_work']}  · 上班中 {counts['working']}  · 請假 {counts['leave']}"
+            summary = f"完成 {counts['off_work']} · 上班中 {counts['working']} · 請假 {counts['leave']} · 國 {holiday_counts['national']} · 休 {holiday_counts['manual']}"
             summary_font = load_font(max(7, int(summary_h * 0.55)))
             # 極小尺寸時截字，確保不會壓出模組邊界。
             while summary and draw.textlength(summary, font=summary_font) > w - pad * 2:

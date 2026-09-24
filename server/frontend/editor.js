@@ -5,7 +5,7 @@ const el = (id) => document.getElementById(id);
 const clone = (value) => value === undefined ? null : JSON.parse(JSON.stringify(value));
 const modelLabel = { waveshare_4in26: "Waveshare 4.26 吋", waveshare_7in5_v2: "Waveshare 7.5 吋 e-Paper HAT V2（黑白）", inky_phat: "Pimoroni Inky pHAT", mock: "Mock 預覽裝置" };
 const categoryLabel = { status: "狀態與時間", data: "數據與進度", planning: "規劃與提醒", visual: "視覺與素材", other: "其他" };
-const requiredElementIds = ["asset-file", "asset-form", "asset-list", "assignment-status", "attendance-form", "attendance-status", "cancel-rule-edit", "canvas-device", "canvas-meta", "clock-in", "clock-out", "config-fields", "copy-token", "device-form", "device-list", "device-model", "device-name", "element-empty", "element-form", "holiday-import-form", "holiday-import-status", "holiday-import-year", "holiday-list", "holiday-manual-date", "holiday-manual-form", "holiday-manual-name", "identity", "layout-canvas", "layout-preview", "leave-note", "load-active-page", "logout", "module-palette", "new-page", "new-page-name", "new-page-preset", "on-leave", "overview-devices", "page-assignment-status", "page-name", "page-select", "preview-device-name", "preview-empty", "quiet-hours-enabled", "quiet-hours-end", "quiet-hours-fields", "quiet-hours-start", "quiet-weekends", "refresh-data", "refresh-daily-at", "refresh-daily-field", "refresh-device-name", "refresh-dialog", "refresh-full-on-page-change", "refresh-interval-field", "refresh-interval-hours", "refresh-mode", "refresh-preview", "remove-element", "rule-attendance", "rule-conflict-help", "rule-device", "rule-end", "rule-form", "rule-form-title", "rule-holiday", "rule-list", "rule-model", "rule-name", "rule-page", "rule-priority", "rule-priority-field", "rule-start", "save-page", "save-refresh", "save-rule", "selected-module-name", "summary-cards", "toast", "token-dialog", "token-value", "weekdays"];
+const requiredElementIds = ["asset-file", "asset-form", "asset-list", "assignment-status", "attendance-form", "attendance-status", "cancel-rule-edit", "canvas-device", "canvas-meta", "clock-in", "clock-out", "config-fields", "copy-token", "device-form", "device-list", "device-model", "device-name", "element-empty", "element-form", "holiday-import-form", "holiday-import-status", "holiday-import-year", "holiday-list", "holiday-manual-date", "holiday-manual-form", "holiday-manual-name", "identity", "layout-canvas", "layout-preview", "leave-note", "load-active-page", "logout", "module-palette", "national-device", "national-edit-page", "national-page", "national-page-form", "national-page-help", "new-page", "new-page-name", "new-page-preset", "on-leave", "overview-devices", "page-assignment-status", "page-name", "page-select", "preview-device-name", "preview-empty", "quiet-hours-enabled", "quiet-hours-end", "quiet-hours-fields", "quiet-hours-start", "quiet-weekends", "refresh-data", "refresh-daily-at", "refresh-daily-field", "refresh-device-name", "refresh-dialog", "refresh-full-on-page-change", "refresh-interval-field", "refresh-interval-hours", "refresh-mode", "refresh-preview", "remove-element", "rule-attendance", "rule-conflict-help", "rule-device", "rule-end", "rule-form", "rule-form-title", "rule-holiday", "rule-list", "rule-model", "rule-name", "rule-page", "rule-priority", "rule-priority-field", "rule-start", "save-page", "save-refresh", "save-rule", "selected-module-name", "summary-cards", "toast", "token-dialog", "token-value", "weekdays"];
 
 async function api(path, options = {}) {
   const headers = new Headers(options.headers || {});
@@ -73,7 +73,7 @@ function switchTab(name) {
   history.replaceState(null, "", `#${name}`);
   if (name === "gallery") loadAssets().catch(message);
   if (name === "content") loadAttendance().catch(message);
-  if (name === "holidays") loadHolidays().catch(message);
+  if (name === "holidays") { renderNationalPageSettings(); loadHolidays().catch(message); }
   if (name === "layouts") renderPage();
 }
 
@@ -163,8 +163,12 @@ function syncPageOptions() {
   const pages = pagesForDevice(editorDevice());
   option(el("page-select"), pages, (page) => page.name, state.page?.id);
   const supports7in5Presets = editorDevice()?.model_id === "waveshare_7in5_v2";
+  const supports426Presets = editorDevice()?.model_id === "waveshare_4in26";
   el("new-page-preset").querySelectorAll("[data-7in5-preset]").forEach((preset) => { preset.hidden = !supports7in5Presets; });
-  if (!supports7in5Presets) el("new-page-preset").value = "blank";
+  el("new-page-preset").querySelectorAll("[data-426-preset]").forEach((preset) => { preset.hidden = !supports426Presets; });
+  if (!supports7in5Presets && !supports426Presets) el("new-page-preset").value = "blank";
+  if (!supports7in5Presets && el("new-page-preset").value.startsWith("7in5_")) el("new-page-preset").value = "blank";
+  if (!supports426Presets && el("new-page-preset").value === "426_holiday") el("new-page-preset").value = "blank";
 }
 function syncRulePageOptions() {
   const device = state.devices.find((entry) => entry.id === el("rule-device").value);
@@ -236,7 +240,8 @@ function renderAssignment() {
     load.disabled = true;
     return;
   }
-  status.textContent = `目前套用「${activePage.name}」：規則「${active.name}」（出勤：${attendance}）。${assignment.selection_reason || ""}`;
+  const national = assignment.holiday_kind === "national";
+  status.textContent = `目前套用「${activePage.name}」：${national ? "國定假日專用頁／" : ""}規則「${active.name}」（出勤：${attendance}）。${assignment.selection_reason || ""}`;
   load.disabled = false;
   if (state.page?.id === activePage.id) pageStatus.textContent = "這就是目前套用到此 Pi 的頁面；儲存後，Pi 下次向 Server 取得版面時會使用新內容。";
   else if (assignment.rules.some((rule) => rule.page_id === state.page?.id)) pageStatus.textContent = "此頁面已指派給該 Pi，但目前條件不符合；現在正在套用另一頁。";
@@ -610,6 +615,30 @@ function renderHolidayList() {
 async function loadHolidays() {
   const payload = await api("/api/workspace/holidays"); state.holidays = payload.dates || []; renderHolidayList();
 }
+function nationalPagesForDevice(device) {
+  return pagesForDevice(device).filter((page) => page.model_id === device?.model_id);
+}
+function syncNationalPageOptions() {
+  const device = state.devices.find((item) => item.id === el("national-device").value) || state.devices.find((item) => !item.hidden) || state.devices[0];
+  if (!device) {
+    el("national-page").replaceChildren(); el("national-page").disabled = true; el("national-edit-page").disabled = true;
+    el("national-page-help").textContent = "請先建立設備。"; return;
+  }
+  el("national-device").value = device.id;
+  const saved = device.profile?.national_holiday_page_id || "";
+  const pages = nationalPagesForDevice(device);
+  const fallback = Object.assign(document.createElement("option"), { value: "", textContent: "通用休假頁（依假日／週末規則）" });
+  const options = [fallback, ...pages.map((page) => Object.assign(document.createElement("option"), { value: page.id, textContent: page.name }))];
+  el("national-page").replaceChildren(...options); el("national-page").value = pages.some((page) => page.id === saved) ? saved : "";
+  el("national-page").disabled = false; el("national-edit-page").disabled = !el("national-page").value;
+  const model = modelLabel[device.model_id] || device.model_id;
+  el("national-page-help").textContent = `${device.name}（${model}）目前${saved && pages.some((page) => page.id === saved) ? "已指定同型號國定假日專用頁" : "使用通用休假頁"}。清單只會顯示 ${model} 頁面；國定假日沒有專用頁時會自動回退。`;
+}
+function renderNationalPageSettings() {
+  const selected = el("national-device").value || editorDevice()?.id || state.devices.find((device) => !device.hidden)?.id || state.devices[0]?.id || "";
+  option(el("national-device"), state.devices, (device) => `${device.name} · ${modelLabel[device.model_id] || device.model_id}`, selected);
+  syncNationalPageOptions();
+}
 function showToken(token) { el("token-value").textContent = token; el("token-dialog").showModal(); }
 function syncRefreshFields() {
   const daily = el("refresh-mode").value === "daily";
@@ -634,7 +663,7 @@ function openRefreshSettings(device) {
 async function refresh(loadSelected = true) {
   const currentPageId = state.page?.id; [state.devices, state.pages, state.rules, state.ruleConflicts, state.assets] = await Promise.all([api("/api/workspace/devices"), api("/api/workspace/pages"), api("/api/workspace/rules"), api("/api/workspace/rules/conflicts"), api("/api/workspace/assets")]);
   const activeDevices = state.devices.filter((device) => !device.hidden); const modelIds = [...new Set(activeDevices.map((device) => device.model_id))]; option(el("canvas-device"), state.devices, (device) => device.name); option(el("rule-model"), modelIds.map((id) => ({ id })), (model) => modelLabel[model.id] || model.id); syncPageOptions(); syncRuleDeviceOptions(); updateRuleConflictHelp();
-  renderSummary(); renderDevices(); renderRules(); renderModulePalette();
+  renderSummary(); renderDevices(); renderRules(); renderModulePalette(); renderNationalPageSettings();
   if (loadSelected && currentPageId && state.pages.some((page) => page.id === currentPageId)) await loadPage(currentPageId);
   else if (loadSelected && !state.page && state.pages[0]) await loadPage(state.pages[0].id);
 }
@@ -651,6 +680,26 @@ function bindEvents() {
   el("attendance-form").onsubmit = async (event) => { event.preventDefault(); try { await api("/api/workspace/attendance/today", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clock_in: el("clock-in").value || null, clock_out: el("clock-out").value || null, on_leave: el("on-leave").checked, leave_note: el("leave-note").value }) }); await loadAttendance(); await loadDeviceAssignment(); notify("出勤資料已儲存，已重新判定目前 Pi 頁面"); } catch (error) { message(error); } };
   el("holiday-import-form").onsubmit = async (event) => { event.preventDefault(); try { const result = await api("/api/workspace/holidays/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ year: Number(el("holiday-import-year").value) }) }); el("holiday-import-status").textContent = `${result.year} 年已匯入 ${result.imported} 個平日休假日。`; await loadHolidays(); await loadDeviceAssignment(); notify("官方行事曆已匯入，已重新判定目前 Pi 頁面"); } catch (error) { message(error); } };
   el("holiday-manual-form").onsubmit = async (event) => { event.preventDefault(); try { await api("/api/workspace/holidays/manual", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ date: el("holiday-manual-date").value, name: el("holiday-manual-name").value || null }) }); event.target.reset(); await loadHolidays(); await loadDeviceAssignment(); notify("自訂休假日已新增，已重新判定目前 Pi 頁面"); } catch (error) { message(error); } };
+  el("national-device").onchange = () => syncNationalPageOptions();
+  el("national-page").onchange = () => { el("national-edit-page").disabled = !el("national-page").value; };
+  el("national-page-form").onsubmit = async (event) => {
+    event.preventDefault();
+    try {
+      const deviceId = el("national-device").value;
+      if (!deviceId) throw new Error("請先選擇設備");
+      await api(`/api/workspace/devices/${encodeURIComponent(deviceId)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ national_holiday_page_id: el("national-page").value || null }) });
+      await refresh(false);
+      if (editorDevice()?.id === deviceId) await loadDeviceAssignment();
+      notify(el("national-page").value ? "國定假日專用頁已儲存" : "已改用通用休假頁");
+    } catch (error) { message(error); }
+  };
+  el("national-edit-page").onclick = async () => {
+    try {
+      const pageId = el("national-page").value;
+      if (!pageId) throw new Error("目前選的是通用休假頁，沒有可編輯的專用頁");
+      await loadPage(pageId); switchTab("layouts");
+    } catch (error) { message(error); }
+  };
   el("refresh-data").onclick = async () => { try { await refresh(); notify("資料已重新整理"); } catch (error) { message(error); } };
   el("logout").onclick = async () => { try { await api("/auth/logout", { method: "POST" }); location.reload(); } catch (error) { message(error); } };
   el("copy-token").onclick = async () => { try { await navigator.clipboard.writeText(el("token-value").textContent); notify("token 已複製"); } catch { notify("無法自動複製，請手動選取 token", true); } };

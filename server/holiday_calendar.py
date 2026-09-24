@@ -107,11 +107,11 @@ def _legacy_dates() -> set[str]:
 
 
 def list_holidays(user_id: str) -> list[dict[str, str]]:
-    """列出此帳號有效休假日；手動日期可覆蓋同日官方／相容資料名稱。"""
+    """列出此帳號有效休假日；同日自訂名稱不會改變其國定假日身分。"""
     data = _load()
     user = _user_data(data, user_id, create=False)
     combined: dict[str, dict[str, str]] = {
-        date: {"date": date, "name": "既有國定假日", "source": "legacy"}
+        date: {"date": date, "name": "既有國定假日", "source": "legacy", "kind": "national"}
         for date in _legacy_dates()
     }
     official = user["official"]
@@ -121,14 +121,17 @@ def list_holidays(user_id: str) -> list[dict[str, str]]:
         for value, name in dates.items():
             try:
                 date = _parse_iso_date(value).isoformat()
-                combined[date] = {"date": date, "name": _clean_name(name, fallback="國定休假"), "source": "official"}
+                combined[date] = {"date": date, "name": _clean_name(name, fallback="國定休假"), "source": "official", "kind": "national"}
             except HolidayCalendarError:
                 continue
     manual = user["manual"]
     for value, name in manual.items():
         try:
             date = _parse_iso_date(value).isoformat()
-            combined[date] = {"date": date, "name": _clean_name(name, fallback="自訂休假"), "source": "manual"}
+            combined[date] = {
+                "date": date, "name": _clean_name(name, fallback="自訂休假"), "source": "manual",
+                "kind": combined.get(date, {}).get("kind", "manual"),
+            }
         except HolidayCalendarError:
             continue
     return [combined[key] for key in sorted(combined)]
@@ -136,6 +139,20 @@ def list_holidays(user_id: str) -> list[dict[str, str]]:
 
 def is_holiday(user_id: str, day: dt.date) -> bool:
     return day.isoformat() in {item["date"] for item in list_holidays(user_id)}
+
+
+def holiday_on(user_id: str, day: dt.date) -> dict[str, str] | None:
+    """回傳當日休假資訊，供場景選擇保留國定與自訂休假的差異。"""
+    return next((item for item in list_holidays(user_id) if item["date"] == day.isoformat()), None)
+
+
+def holidays_in_month(user_id: str, year: int, month: int) -> dict[str, dict[str, str]]:
+    """供熱力圖下發單月最小資料，不傳其他月份或其他帳號的日期。"""
+    prefix = f"{year:04d}-{month:02d}-"
+    return {
+        str(int(item["date"][-2:])): {"kind": item["kind"], "name": item["name"]}
+        for item in list_holidays(user_id) if item["date"].startswith(prefix)
+    }
 
 
 def add_manual_holiday(user_id: str, value: Any, name: Any = None) -> dict[str, str]:

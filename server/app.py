@@ -29,6 +29,7 @@ def create_app() -> Flask:
     workspace_store.ensure_default_lunch_pages()
     workspace_store.ensure_default_weekend_pages()
     workspace_store.ensure_default_holiday_rules()
+    workspace_store.ensure_default_national_holiday_pages()
     workspace_store.ensure_default_leave_pages()
     workspace_store.upgrade_default_refresh_policy()
     workspace_store.upgrade_default_refresh_policy_to_daily()
