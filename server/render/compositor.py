@@ -96,6 +96,8 @@ def resolve_layout_elements(device_id: str, now: datetime.datetime | None = None
         instance_id = el.get("instance_id", el.get("module_id"))
         key = (device_id, instance_id)
         cfg = el.get("config", {})
+        if el.get("module_id") == "image":
+            cfg = {**cfg, "_animation_min_seconds": profile.get("partial_refresh_min_interval_seconds", 1)}
         interval = max(
             el.get("refresh_interval", module.min_refresh_interval),
             module.min_refresh_interval if not module.always_rerender else 0,

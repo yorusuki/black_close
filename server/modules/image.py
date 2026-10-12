@@ -73,9 +73,14 @@ class ImageModule(BaseModule):
             override = float(cfg.get("animation_interval_seconds", 0))
         except (TypeError, ValueError):
             override = 0
+        try:
+            minimum_ms = max(20, round(float(cfg.get("_animation_min_seconds", 0.02)) * 1000))
+        except (TypeError, ValueError, OverflowError):
+            minimum_ms = 1000
+        clean = [(filename, max(duration, minimum_ms)) for filename, duration in clean]
         now_ms = int(time.time() * 1000)
         if override > 0:
-            return clean[int(now_ms // max(1, round(override * 1000))) % len(clean)][0]
+            return clean[int(now_ms // max(minimum_ms, round(override * 1000))) % len(clean)][0]
         cycle = sum(duration for _, duration in clean)
         position = now_ms % cycle
         elapsed = 0

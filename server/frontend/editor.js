@@ -493,7 +493,7 @@ function renderInspector() {
         const minimum = partialRefreshMinimum();
         control.step = "0.1";
         if (minimum !== null) {
-          control.min = String(minimum);
+          control.min = String(schema.allow_zero ? 0 : minimum);
           const safety = document.createElement("span"); safety.className = "field-help";
           safety.textContent = `此 ${modelLabel[editorDevice()?.model_id] || "面板"} 的安全局刷下限為 ${minimum.toFixed(1)} 秒。${schema.allow_zero ? (schema.zero_help || "0 表示固定不輪替。") : ""}`;
           input.append(safety);
