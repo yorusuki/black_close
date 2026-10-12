@@ -351,11 +351,9 @@ class EPD:
 
         self.send_data ((Yend-1)//256)		
         self.send_data ((Yend-1)%256)  #y-end
-        # R90h PT_SCAN=0: scan only inside the partial window.
-        # PT_SCAN=1 (official full-window demo default) also scans outside it.
-        self.send_data (0x00)
+        self.send_data (0x01)
 
-        image1 = [0xFF] * int(Width * Height)
+        image1 = [0xFF] * int(self.width * self.height / 8)
         for j in range(Height):
                 for i in range(Width):
                     image1[i + j * Width] = (~Image[i + j * Width]) & 0xFF
