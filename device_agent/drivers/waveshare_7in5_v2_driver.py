@@ -50,7 +50,19 @@ class Waveshare7In5V2Driver(BaseDisplayDriver):
                 self._mode = "partial"
             # 官方範例也是將完整 800×480 buffer 傳入 partial API；此面板的
             # 局刷波形與全刷不同，座標區域最佳化則保留給日後實機驗證。
-            self._epd.display_Partial(buffer, 0, 0, self.width, self.height)
+            if dirty_boxes:
+                # 合併成一個 byte 對齊區域，避免每個元件各觸發一次面板波形。
+                x0 = max(0, min(int(box[0]) for box in dirty_boxes)) // 8 * 8
+                y0 = max(0, min(int(box[1]) for box in dirty_boxes))
+                x1 = min(self.width, (max(int(box[0] + box[2]) for box in dirty_boxes) + 7) // 8 * 8)
+                y1 = min(self.height, max(int(box[1] + box[3]) for box in dirty_boxes))
+                if x1 <= x0 or y1 <= y0:
+                    raise ValueError("局刷區域超出面板範圍")
+                stride = self.width // 8
+                region = [value for y in range(y0, y1) for value in buffer[y * stride + x0 // 8:y * stride + x1 // 8]]
+                self._epd.display_Partial(region, x0, y0, x1, y1)
+            else:
+                self._epd.display_Partial(buffer, 0, 0, self.width, self.height)
             return
 
         if self._mode != "full":
